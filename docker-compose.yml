@@ -11,7 +11,6 @@ x-airflow-common: &airflow-common
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
     AIRFLOW__CORE__DAG_RUN_CONF_OVERRIDES_PARAMS: 'true'
-    # Snowflake connection - set these in a .env file (never commit credentials)
     AIRFLOW_CONN_SNOWFLAKE_DEFAULT: >-
       snowflake://${SNOWFLAKE_USER}:${SNOWFLAKE_PASSWORD}@${SNOWFLAKE_ACCOUNT}
       /?warehouse=${SNOWFLAKE_WAREHOUSE}
@@ -53,12 +52,15 @@ services:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 5s
       retries: 5
+    restart: unless-stopped
 
   airflow-webserver:
     <<: *airflow-common
     command: webserver
     ports:
       - "8080:8080"
+    mem_limit: 2g
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
@@ -68,6 +70,8 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    mem_limit: 4g
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
       interval: 10s
