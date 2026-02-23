@@ -76,6 +76,26 @@ services:
       timeout: 10s
       retries: 5
 
+  # Fixes ownership of host-mounted volumes before airflow-init runs.
+  # This is needed because Docker creates volumes as root, but Airflow
+  # runs as AIRFLOW_UID (50000) and needs write access to logs/.
+  airflow-volume-permissions:
+    image: apache/airflow:2.9.1
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        chmod -R 775 /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    environment:
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash
@@ -92,6 +112,11 @@ services:
           --password admin
     environment:
       <<: *airflow-common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-volume-permissions:
+        condition: service_completed_successfully
 
 volumes:
   postgres-db-volume:
