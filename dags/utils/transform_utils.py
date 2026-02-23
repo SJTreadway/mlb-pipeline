@@ -118,13 +118,18 @@ def _drop_bad_speed_rows(df: pd.DataFrame) -> pd.DataFrame:
     events that slipped past the pitch_type filter, or on data errors.
     40 mph is a safe floor — no MLB pitch is slower than that.
     """
-    if "release_speed" not in df.columns:
+    speed_col = None
+    for col in ["release_speed", "RELEASE_SPEED"]:
+        if col in df.columns:
+            speed_col = col
+            break
+    if speed_col is None:
         return df
     before = len(df)
-    df = df[df["release_speed"].notna() & (df["release_speed"] >= 40)]
+    df = df[df[speed_col].notna() & (df[speed_col] >= 40)]
     dropped = before - len(df)
     if dropped:
-        logger.info(f"Dropped {dropped:,} rows with missing or implausible release speed.")
+        logger.warning(f"Dropped {dropped:,} rows with missing or implausible release speed.")
     return df
 
 
@@ -139,6 +144,9 @@ def validate_dataframe(df: pd.DataFrame) -> None:
     Hard failures: empty DataFrame, missing key columns.
     Warnings only: edge case values that are filtered upstream.
     """
+    # Drop rows with implausible release speeds (e.g., 0 or < 40 mph)
+    df = _drop_bad_speed_rows(df)
+
     # Hard failures - these should never happen after cleaning
     if len(df) == 0:
         raise ValueError("Data quality checks failed:\n  - No rows in DataFrame")

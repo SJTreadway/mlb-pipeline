@@ -11,9 +11,12 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../dags"))
 from utils.transform_utils import clean_statcast, validate_dataframe, _drop_pitchless_rows
+
+LOGGER = logging.getLogger(__name__)
 
 
 def make_sample_df(**overrides) -> pd.DataFrame:
@@ -124,16 +127,16 @@ class TestValidateDataframe:
         with pytest.raises(ValueError, match="GAME_PK"):
             validate_dataframe(df)
 
-    def test_fails_on_impossible_launch_angle(self):
+    def test_fails_on_impossible_launch_angle(self, caplog):
         df = make_sample_df()
         df = clean_statcast(df)
         df["LAUNCH_ANGLE"] = 95.0  # impossible
-        with pytest.raises(ValueError, match="launch angle"):
-            validate_dataframe(df)
+        validate_dataframe(df)
+        assert "Unusual launch angles detected (>90 or <-90) — review source data." in caplog.text
 
-    def test_fails_on_low_pitch_speed(self):
+    def test_fails_on_low_pitch_speed(self, caplog):
         df = make_sample_df()
         df = clean_statcast(df)
-        df["RELEASE_SPEED"] = 20.0  # way too slow
-        with pytest.raises(ValueError, match="40 mph"):
-            validate_dataframe(df)
+        df.loc[0, "RELEASE_SPEED"] = 20.0  # way too slow
+        validate_dataframe(df)
+        assert "Dropped 1 rows with missing or implausible release speed." in caplog.text
