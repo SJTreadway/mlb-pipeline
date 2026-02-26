@@ -22,6 +22,7 @@ x-airflow-common: &airflow-common
     SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
     SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
     SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+    ODDS_API_KEY: ${ODDS_API_KEY}
     _PIP_ADDITIONAL_REQUIREMENTS: >-
       pybaseball==2.2.7
       apache-airflow-providers-snowflake==5.3.0
@@ -86,13 +87,11 @@ services:
     command:
       - -c
       - |
-        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
-        chmod -R 775 /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        mkdir -p /opt/airflow/logs
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs
+        chmod -R 775 /opt/airflow/logs
     volumes:
-      - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
     environment:
       AIRFLOW_UID: ${AIRFLOW_UID:-50000}
 

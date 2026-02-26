@@ -5,6 +5,7 @@ An Airflow data pipeline that ingests MLB Statcast pitch-level data into Snowfla
 ## What it does
 
 - Pulls pitch-by-pitch Statcast data from Baseball Savant via `pybaseball`
+- Pulls team batting and pitching game logs from Baseball Reference via `pybaseball`
 - Cleans and validates the data (column selection, type coercion, quality checks)
 - Loads into Snowflake using bulk `PUT/COPY` (fast, not row-by-row inserts)
 - Runs daily on a schedule; supports manual backfills by season or date range
@@ -13,7 +14,7 @@ An Airflow data pipeline that ingests MLB Statcast pitch-level data into Snowfla
 ## Architecture
 
 ```
-Baseball Savant API
+Baseball Savant API / Baseball Reference
        │
        ▼
   [pybaseball]          ← Python library wrapping the Statcast endpoint
@@ -27,10 +28,11 @@ Baseball Savant API
   └────────────────────────────────────────────┘
        │
        ▼
-   Snowflake            ← Cloud data warehouse
-   BASEBALL.STATCAST.RAW_PITCHES   (raw layer)
-   BASEBALL.STATCAST.PITCHES       (deduplicated view)
-   BASEBALL.STATCAST.PITCHER_ARSENAL (aggregated view)
+    Snowflake            ← Cloud data warehouse
+    BASEBALL.STATCAST.RAW_PITCHES   (raw layer - pitch-level Statcast)
+    BASEBALL.STATCAST.RAW_BATTERS    (raw layer - batter Statcast)
+    BASEBALL.HISTORICAL.TEAM_BATTING_LOGS   (team batting game logs)
+    BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS  (team pitching game logs)
 ```
 
 ## Project structure
@@ -40,14 +42,20 @@ statcast-pipeline/
 ├── docker-compose.yml          # Airflow + Postgres (metadata DB)
 ├── .env.example                # Environment variable template
 ├── dags/
-│   ├── statcast_pipeline.py    # Daily incremental DAG
-│   ├── statcast_backfill.py    # Historical backfill DAG
+│   ├── statcast_pitcher_backfill.py    # Historical Statcast pitcher data backfill
+│   ├── statcast_batter_backfill.py    # Historical Statcast batter data backfill
+│   ├── historical_team_batting_logs_backfill.py   # Team batting game logs backfill
+│   ├── historical_team_pitching_logs_backfill.py  # Team pitching game logs backfill
 │   └── utils/
 │       ├── snowflake_utils.py  # Snowflake connection helpers
 │       └── transform_utils.py  # Cleaning + validation logic
+├── helpers/
+│   └── historical_team_helpers.py  # Helper functions for team data
 ├── include/
 │   └── sql/
-│       └── setup_snowflake.sql # One-time Snowflake setup script
+│       ├── setup_snowflake_pitcher.sql      # Pitcher table setup
+│       ├── setup_snowflake_batter.sql       # Batter table setup
+│       └── setup_snowflake_team_game_logs.sql  # Team game logs table setup
 └── tests/
     └── test_transform_utils.py # Unit tests (no Airflow/Snowflake needed)
 ```
@@ -69,11 +77,23 @@ cp .env.example .env
 
 ### 2. Set up Snowflake
 
-Run `include/sql/setup_snowflake.sql` in your Snowflake worksheet. This creates:
-- The `BASEBALL` database and `STATCAST` schema
-- The `RAW_PITCHES` table
-- The `PITCHES` deduplicated view
-- The `PITCHER_ARSENAL` aggregated view
+Run the SQL setup scripts in your Snowflake worksheet:
+
+**For Statcast pitcher data:**
+- Run `include/sql/setup_snowflake_pitcher.sql`
+
+**For Statcast batter data:**
+- Run `include/sql/setup_snowflake_batter.sql`
+
+**For historical team game logs:**
+- Run `include/sql/setup_snowflake_team_game_logs.sql`
+
+This creates:
+- The `BASEBALL` database with `STATCAST` and `HISTORICAL` schemas
+- `BASEBALL.STATCAST.RAW_PITCHES` - Pitch-level Statcast data
+- `BASEBALL.STATCAST.RAW_BATTERS` - Batter Statcast data
+- `BASEBALL.HISTORICAL.TEAM_BATTING_LOGS` - Team batting game logs
+- `BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS` - Team pitching game logs
 
 ### 3. Start Airflow
 
@@ -104,13 +124,31 @@ pip install pybaseball pandas pytest
 pytest tests/ -v
 ```
 
-### 6. Backfill a season
+### 6. Backfill data
 
-Trigger `statcast_backfill` from the Airflow UI with config:
+**Statcast pitcher data:**
+Trigger `statcast_pitcher_backfill` from the Airflow UI with config:
 ```json
 { "season": 2023 }
 ```
-This pulls the full 2023 regular season in weekly chunks (~25 chunks, ~750k pitches).
+
+**Statcast batter data:**
+Trigger `statcast_batter_backfill` from the Airflow UI with config:
+```json
+{ "season": 2023 }
+```
+
+**Historical team batting logs:**
+Trigger `historical_team_batting_logs_backfill` from the Airflow UI with config:
+```json
+{ "season": 2023 }
+```
+
+**Historical team pitching logs:**
+Trigger `historical_team_pitching_logs_backfill` from the Airflow UI with config:
+```json
+{ "season": 2023 }
+```
 
 ## Key design decisions
 
@@ -146,11 +184,19 @@ FROM BASEBALL.STATCAST.PITCHES
 WHERE game_year = 2023 AND release_speed >= 99
 ORDER BY release_speed DESC;
 
--- Strike zone heatmap data for a specific pitcher
-SELECT plate_x, plate_z, pitch_type, type
-FROM BASEBALL.STATCAST.PITCHES
-WHERE pitcher = 543037  -- Gerrit Cole MLBAM ID
-  AND game_year = 2023;
+-- Team batting stats for a specific season
+SELECT Team, Season, SUM(R) as total_runs, SUM(HR) as total_hr, SUM(SO) as total_so
+FROM BASEBALL.HISTORICAL.TEAM_BATTING_LOGS
+WHERE Season = 2023
+GROUP BY Team, Season
+ORDER BY total_runs DESC;
+
+-- Team pitching ERA leaders
+SELECT Team, Season, ROUND(AVG(ERA), 2) as avg_era, SUM(SO) as total_strikeouts
+FROM BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS
+WHERE Season = 2023
+GROUP BY Team, Season
+ORDER BY avg_era ASC;
 ```
 
 ## Extending this project

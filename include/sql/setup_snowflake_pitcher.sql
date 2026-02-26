@@ -129,3 +129,7 @@ SELECT
     ROUND(AVG(estimated_woba_using_speedangle), 3) AS avg_xwoba
 FROM BASEBALL.STATCAST.PITCHES
 GROUP BY 1, 2, 3, 4, 5;
+
+-- 5. Create raw batters table for statcast_batter data
+--    This uses pybaseball.statcast_batter() which returns player-specific data
+--    (Included in setup_snowflake_batter.sql)

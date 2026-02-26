@@ -1,6 +1,6 @@
 """
 utils/transform_utils.py
-Cleaning and transformation logic for raw Statcast data.
+Cleaning and transformation logic for raw Historical Team data.
 Keeping transforms separate from the DAG keeps the DAG readable
 and makes this logic independently testable.
 """
@@ -11,125 +11,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-COLUMNS_TO_KEEP = [
-    "game_pk", "game_date", "game_year", "game_type",
-    "pitch_number", "inning", "inning_topbot", "at_bat_number",
-    "pitch_name", "pitch_type",
-    "pitcher", "batter", "player_name", "stand", "p_throws",
-    "home_team", "away_team",
-    "release_speed", "release_spin_rate", "release_extension",
-    "release_pos_x", "release_pos_y", "release_pos_z",
-    "pfx_x", "pfx_z", "plate_x", "plate_z",
-    "vx0", "vy0", "vz0", "ax", "ay", "az",
-    "effective_speed", "spin_axis",
-    "description", "events", "type", "zone",
-    "hit_location", "bb_type",
-    "hc_x", "hc_y", "hit_distance_sc",
-    "launch_speed", "launch_angle", "launch_speed_angle",
-    "estimated_ba_using_speedangle", "estimated_woba_using_speedangle",
-    "woba_value", "woba_denom", "babip_value", "iso_value",
-    "delta_home_win_exp", "delta_run_exp",
-    "balls", "strikes", "outs_when_up",
-    "on_1b", "on_2b", "on_3b",
-    "post_home_score", "post_away_score",
-]
-
-
-def clean_statcast(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Apply all cleaning steps to a raw pybaseball DataFrame.
-    Returns a cleaned DataFrame ready for Snowflake ingestion.
-    """
-    logger.info(f"Starting transform on {len(df):,} rows.")
-
-    df = _select_columns(df)
-    df = _parse_dates(df)
-    df = _coerce_numerics(df)
-    df = _drop_pitchless_rows(df)
-    df = _drop_bad_speed_rows(df)
-    df = _standardize_column_names(df)
-
-    logger.info(f"Transform complete. {len(df):,} rows remaining.")
-    return df
-
-
-def _select_columns(df: pd.DataFrame) -> pd.DataFrame:
-    available = [c for c in COLUMNS_TO_KEEP if c in df.columns]
-    missing = set(COLUMNS_TO_KEEP) - set(available)
-    if missing:
-        logger.warning(f"Columns not found in source data (will be NULL): {missing}")
-    return df[available].copy()
-
-
 def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
-    if "game_date" in df.columns:
-        df["game_date"] = pd.to_datetime(df["game_date"], errors="coerce").dt.date
-    if "game_year" not in df.columns and "game_date" in df.columns:
-        df["game_year"] = pd.to_datetime(df["game_date"]).dt.year
-    return df
-
-
-def _coerce_numerics(df: pd.DataFrame) -> pd.DataFrame:
-    float_cols = [
-        "release_speed", "release_spin_rate", "release_extension",
-        "release_pos_x", "release_pos_y", "release_pos_z",
-        "pfx_x", "pfx_z", "plate_x", "plate_z",
-        "vx0", "vy0", "vz0", "ax", "ay", "az",
-        "effective_speed", "spin_axis",
-        "hc_x", "hc_y", "hit_distance_sc",
-        "launch_speed", "launch_angle",
-        "estimated_ba_using_speedangle", "estimated_woba_using_speedangle",
-        "woba_value", "babip_value", "iso_value",
-        "delta_home_win_exp", "delta_run_exp",
-    ]
-    int_cols = [
-        "game_pk", "game_year", "pitch_number", "inning",
-        "at_bat_number", "zone", "hit_location", "launch_speed_angle",
-        "woba_denom", "balls", "strikes", "outs_when_up",
-        "on_1b", "on_2b", "on_3b", "post_home_score", "post_away_score",
-        "pitcher", "batter",
-    ]
-
-    for col in float_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
-
-    for col in int_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
-
-    return df
-
-
-def _drop_pitchless_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows with no pitch_type are non-pitch events (pickoffs, etc.)."""
-    before = len(df)
-    df = df[df["pitch_type"].notna() & (df["pitch_type"] != "")]
-    dropped = before - len(df)
-    if dropped:
-        logger.info(f"Dropped {dropped:,} non-pitch rows.")
-    return df
-
-
-def _drop_bad_speed_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Drop rows with missing or implausible release speeds.
-    pybaseball occasionally returns 0 or null for speed on non-pitch
-    events that slipped past the pitch_type filter, or on data errors.
-    40 mph is a safe floor — no MLB pitch is slower than that.
-    """
-    speed_col = None
-    for col in ["release_speed", "RELEASE_SPEED"]:
-        if col in df.columns:
-            speed_col = col
-            break
-    if speed_col is None:
-        return df
-    before = len(df)
-    df = df[df[speed_col].notna() & (df[speed_col] >= 40)]
-    dropped = before - len(df)
-    if dropped:
-        logger.warning(f"Dropped {dropped:,} rows with missing or implausible release speed.")
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    if "season" not in df.columns and "date" in df.columns:
+        df["season"] = pd.to_datetime(df["date"]).dt.year
     return df
 
 
@@ -144,19 +30,60 @@ def validate_dataframe(df: pd.DataFrame) -> None:
     Hard failures: empty DataFrame, missing key columns.
     Warnings only: edge case values that are filtered upstream.
     """
-    # Drop rows with implausible release speeds (e.g., 0 or < 40 mph)
-    df = _drop_bad_speed_rows(df)
-
     # Hard failures - these should never happen after cleaning
     if len(df) == 0:
         raise ValueError("Data quality checks failed:\n  - No rows in DataFrame")
-    if "GAME_PK" not in df.columns:
-        raise ValueError("Data quality checks failed:\n  - Missing GAME_PK column")
-    if "RELEASE_SPEED" in df.columns and df["RELEASE_SPEED"].isna().all():
-        raise ValueError("Data quality checks failed:\n  - All RELEASE_SPEED values are null")
-
-    # Warnings only - log but don't fail
-    if "LAUNCH_ANGLE" in df.columns and df["LAUNCH_ANGLE"].dropna().abs().gt(90).any():
-        logger.warning("Unusual launch angles detected (>90 or <-90) — review source data.")
 
     logger.info(f"All data quality checks passed. ({len(df):,} rows)")
+
+
+def clean_team_game_logs(df: pd.DataFrame, log_type: str = "batting") -> pd.DataFrame:
+    """
+    Apply cleaning steps to team game logs from pybaseball.team_game_logs().
+    Returns a cleaned DataFrame ready for Snowflake ingestion.
+    """
+    logger.info(f"Starting team game logs transform on {len(df):,} rows.")
+
+    df = _standardize_column_names(df)
+    df = _parse_team_game_dates(df)
+    df = _coerce_team_game_numerics(df, log_type)
+
+    logger.info(f"Team game logs transform complete. {len(df):,} rows remaining.")
+    return df
+
+
+def _parse_team_game_dates(df: pd.DataFrame) -> pd.DataFrame:
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
+    return df
+
+
+def _coerce_team_game_numerics(df: pd.DataFrame, log_type: str) -> pd.DataFrame:
+    common_int_cols = [
+        "Season", "Game", "W", "L", "T", "Win", "Loss",
+        "R", "RA", "H", "X2B", "X3B", "HR", "RBI",
+        "BB", "IBB", "SO", "HBP", "SB", "CS", "LOB", "E",
+        "Inn", "X_Inn", "BFP", "Attend"
+    ]
+
+    for col in common_int_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+
+    float_cols = ["cLI", "WPA", "aLI", "WPA+", "WPA-", "cWPA", "cLI+", "cLI-"]
+    for col in float_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+
+    if log_type == "pitching":
+        pitch_int_cols = ["BF", "Pit", "Str", "GSc", "WP", "BK", "IR", "IS"]
+        for col in pitch_int_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+
+        if "IP" in df.columns:
+            df["IP"] = pd.to_numeric(df["IP"], errors="coerce").astype("float64")
+        if "ERA" in df.columns:
+            df["ERA"] = pd.to_numeric(df["ERA"], errors="coerce").astype("float64")
+
+    return df
