@@ -23,8 +23,9 @@ x-airflow-common: &airflow-common
     SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
     SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
     ODDS_API_KEY: ${ODDS_API_KEY}
+    GH_TOKEN: ${GH_TOKEN}
     _PIP_ADDITIONAL_REQUIREMENTS: >-
-      pybaseball==2.2.7
+      pybaseball@git+https://github.com/jldbc/pybaseball.git
       apache-airflow-providers-snowflake==5.3.0
       pandas==2.1.4
       pyarrow==14.0.1
