@@ -1,5 +1,5 @@
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.1
+  build: .
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -25,7 +25,7 @@ x-airflow-common: &airflow-common
     ODDS_API_KEY: ${ODDS_API_KEY}
     GH_TOKEN: ${GH_TOKEN}
     _PIP_ADDITIONAL_REQUIREMENTS: >-
-      pybaseball@git+https://github.com/jldbc/pybaseball.git
+      pybaseball==2.2.7
       apache-airflow-providers-snowflake==5.3.0
       pandas==2.1.4
       pyarrow==14.0.1
