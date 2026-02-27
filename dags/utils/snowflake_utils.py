@@ -31,10 +31,10 @@ def get_conn():
 
 def get_max_loaded_date(
     table: str,
-    date_col: str = "game_date",
+    date_col: str = "date",
     conn_id: str = "snowflake_default",  # kept for signature compatibility
 ) -> Optional[str]:
-    """Return the most recent game_date already in the table, or None if empty."""
+    """Return the most recent date already in the table, or None if empty."""
     conn = get_conn()
     try:
         cursor = conn.cursor()

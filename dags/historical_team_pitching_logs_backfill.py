@@ -17,7 +17,7 @@ from airflow.models.param import Param
 from airflow.utils.dates import days_ago
 
 from utils.snowflake_utils import load_dataframe
-from utils.historical_team_utils import get_game_data_by_team, TEAMS
+from utils.historical_team_utils import get_game_data_by_team, TEAMS, SEASONS
 
 logger = logging.getLogger(__name__)
 
@@ -35,32 +35,37 @@ TARGET_TABLE = "TEAM_PITCHING_LOGS"
     default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=10)},
     max_active_tasks=4,
     tags=["baseball", "historical", "pitching", "backfill"],
-    #params={
-    #    "teams": Param(TEAMS, type="array", description="List of team abbreviations to backfill"),
-    #},
+    params={
+        "teams": Param(TEAMS, type="array", description="List of team abbreviations to backfill"),
+        "seasons": Param(SEASONS, type="array", description="List of seasons to backfill")
+    },
 )
 def historical_team_pitching_logs_backfill():
 
-    '''
     @task
     def get_teams(**context) -> list[str]:
         params = context.get("params", {})
         return params.get("teams", TEAMS)
-    '''
 
     @task
-    def extract_team_pitching(team: str) -> dict:
-        """Extract pitching game logs for a single team."""
-        logger.info(f"Extracting pitching data for team: {team}")
+    def get_seasons(**context) -> list[int]:
+        params = context.get("params", {})
+        return params.get("seasons", SEASONS)
 
-        df = get_game_data_by_team(team, "pitching")
+    @task
+    def extract_team_pitching(team: str, season: int) -> dict:
+        """Extract pitching game logs for a single team."""
+        logger.info(f"Extracting pitching data for team: {team} for the {season} season")
+
+        df = get_game_data_by_team(team, season, "pitching")
 
         if df is None or df.empty:
             logger.warning(f"No pitching data for team: {team}")
-            return {"team": team, "data": None, "row_count": 0}
+            return {"team": team, "season": season, "data": None, "row_count": 0}
 
         return {
             "team": team,
+            "season": season,
             "data": df.to_json(orient="split", date_format="iso"),
             "row_count": len(df),
         }
@@ -86,8 +91,9 @@ def historical_team_pitching_logs_backfill():
         total = sum(row_counts)
         logger.info(f"Pitching logs backfill complete. Total rows loaded: {total:,}")
 
-    #teams = get_teams()
-    extracted = extract_team_pitching.expand(team=TEAMS)
+    teams = get_teams()
+    seasons = get_seasons()
+    extracted = extract_team_pitching.expand(team=teams, season=seasons)
     row_counts = load_team_pitching.expand(extract_result=extracted)
     summarize(row_counts)
 
