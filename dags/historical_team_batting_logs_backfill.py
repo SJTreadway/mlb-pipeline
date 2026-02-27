@@ -34,7 +34,7 @@ TARGET_TABLE = "TEAM_BATTING_LOGS"
     start_date=days_ago(1),
     catchup=False,
     default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=10)},
-    max_active_tasks=4,
+    max_active_tasks=1, # previously 4
     tags=["baseball", "historical", "batting", "backfill"],
     params={
         "teams": Param(TEAMS, type="array", description="List of team abbreviations to backfill"),

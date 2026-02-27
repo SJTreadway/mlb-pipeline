@@ -28,7 +28,7 @@ TEAMS = [
   "ARI", "ATL", "CHC", "CIN",
   "COL", "LAD", "SDP", "MIA",
   "NYM", "PHI", "PIT", "SFG",
-  "STL", "TBD", "WSN"
+  "STL", "TBD", "WSN", "ATH"
 ]
 
 cache.enable()
@@ -92,7 +92,7 @@ def postprocess_game_data(data: pd.DataFrame) -> pd.DataFrame:
     data.columns = [column_mapping[col] for col in data.columns]
     
     # Convert numeric columns
-    numeric_cols = ['H', 'X2B', 'X3B', 'HR', 'R', 'RBI', 'IBB', 'SO', 'HBP', 'SB', 'CS', 'LOB', 'Inn', 'PA', 'AB', 'BA', 'OBP', 'SLG', 'OPS', 'TB', 'GIDP', 'SH', 'SF', 'ROE', 'BABIP']
+    numeric_cols = data.columns.difference(['Team', 'Season', 'Date', 'OppStart', 'OppStartThrows'])
     data[numeric_cols] = data[numeric_cols].apply(pd.to_numeric, errors="coerce")
     data = data.dropna(subset=numeric_cols, how='all')  # drop pure header rows
 
@@ -104,6 +104,7 @@ def postprocess_game_data(data: pd.DataFrame) -> pd.DataFrame:
 
 def get_game_data_by_team(team, season, stat_type):
     t_param = "b" if stat_type == "batting" else "p"
+    data = pd.DataFrame()
     try:
         content = SESSION.get(_URL.format(team, t_param, season)).content
         
@@ -120,7 +121,7 @@ def get_game_data_by_team(team, season, stat_type):
             logger.info(f'Game {stat_type} data loaded for {team} in {season}')
     except Exception as error:
         logger.info(f'Unable to load game {stat_type} data for {team} in {season}')
-    return postprocess_game_data(data) if not data.empty else data
+    return postprocess_game_data(data) if data is not None and not data.empty else data
 
 def get_season_game_logs(season):
     event_df = season_game_logs(season)

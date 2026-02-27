@@ -21,7 +21,7 @@ Cities/Teams Years in MLB for data loading (earliest year is 1980)
 | **KCR** | All |
 | **LAA** | 2005–present |
 | **LAD** | All |
-| **MIA** | 1993–present |
+| **MIA** | 2012–present |
 | **MIL** | All |
 | **MIN** | All |
 | **MON** | 1980–2004 |
