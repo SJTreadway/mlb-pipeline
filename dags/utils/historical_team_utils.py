@@ -1,19 +1,22 @@
 """
 historical_team_utils.py
-====================
+=========================
 Helper functions for historical_team_batting_logs and historical_team_pitching_logs Airflow DAGs
 """
 
 from __future__ import annotations
 
 import logging
+import time
+from io import StringIO
 
 import pandas as pd
-from pybaseball import team_game_logs, season_game_logs, cache
+import requests
+from bs4 import BeautifulSoup
+from pybaseball import cache, season_game_logs
 
 logger = logging.getLogger(__name__)
 
-# 2020 was shortened due to COVID - July 23 to Sept 27.
 SEASONS = list[int](range(1980, 2026))
 
 TEAMS = [
@@ -30,19 +33,62 @@ TEAMS = [
 
 cache.enable()
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+_URL = "https://www.baseball-reference.com/teams/tgl.cgi?team={}&t={}&year={}"
+
+def postprocess_game_data(data: pd.DataFrame) -> pd.DataFrame:
+    #print(data.columns)
+    data.drop([('Unnamed: 0_level_0', 'Rk')], axis=1, inplace=True)  # drop index column
+    data = data.iloc[:-1]
+    repl_dict = {
+        "Gtm" : "Game",
+        "Unnamed: 3_level_1": "Home",
+        "#": "NumPlayers",
+        "Opp. Starter (GmeSc)": "OppStart",
+        "Pitchers Used (Rest-GameScore-Dec)": "PitchersUsed"
+    }
+    data = data.rename(columns= repl_dict).copy()
+    data[('Unnamed: 3_level_0','Home')] = data[('Unnamed: 3_level_0','Home')].isnull()  # '@' if away, empty if home
+    data = data[data[('Unnamed: 1_level_0','Game')] != 'Gtm'].copy()  # drop empty month rows
+    data = data.apply(pd.to_numeric, errors="ignore")
+    data[('Unnamed: 1_level_0','Game')] = data[('Unnamed: 1_level_0','Game')].astype(int)
+    return data.reset_index(drop=True)
+
 def get_game_data_by_team(team, stat_type):
     game_df = pd.DataFrame()
+    t_param = "b" if stat_type == "batting" else "p"
     for year in SEASONS:
         temp_df = pd.DataFrame()
-        try:
-            temp_df = team_game_logs(year, team, stat_type)
-            temp_df['Team'] = team
-            temp_df['Season'] = year
-            game_df = pd.concat((game_df, temp_df))
-            logger.info(f'Game {stat_type} data loaded for {team} in {year}')
-        except Exception as error:
-            logger.info(f'Unable to load game {stat_type} data for {team} in {year} with error: {error}')
-    return game_df
+        for attempt in range(3):
+            try:
+                response = requests.get(_URL.format(team, t_param, year), headers=HEADERS, timeout=30)
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP {response.status_code}")
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                table_id = "players_standard_{}".format(stat_type)
+                table = soup.find('table', {'id': table_id})
+                if table is None:
+                    raise RuntimeError(f"Table '{table_id}' not found on page")
+                data = pd.read_html(StringIO(str(table)))[0]
+                
+                if data:
+                    temp_df = pd.DataFrame(data)
+                    temp_df['Team'] = team
+                    temp_df['Season'] = year
+                    game_df = pd.concat((game_df, temp_df), ignore_index=True)
+                    logger.info(f'Game {stat_type} data loaded for {team} in {year}')
+                break
+            except Exception as error:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    logger.info(f'Retry {attempt + 1} for {team} {year}: {error}')
+                else:
+                    logger.info(f'Unable to load game {stat_type} data for {team} in {year} with error: {error}')
+    return postprocess_game_data(game_df)
 
 def get_season_game_logs():
     event_df = pd.DataFrame()

@@ -35,16 +35,18 @@ TARGET_TABLE = "TEAM_PITCHING_LOGS"
     default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=10)},
     max_active_tasks=4,
     tags=["baseball", "historical", "pitching", "backfill"],
-    params={
-        "teams": Param(TEAMS, type="array", description="List of team abbreviations to backfill"),
-    },
+    #params={
+    #    "teams": Param(TEAMS, type="array", description="List of team abbreviations to backfill"),
+    #},
 )
 def historical_team_pitching_logs_backfill():
 
+    '''
     @task
     def get_teams(**context) -> list[str]:
         params = context.get("params", {})
         return params.get("teams", TEAMS)
+    '''
 
     @task
     def extract_team_pitching(team: str) -> dict:
@@ -84,8 +86,8 @@ def historical_team_pitching_logs_backfill():
         total = sum(row_counts)
         logger.info(f"Pitching logs backfill complete. Total rows loaded: {total:,}")
 
-    teams = get_teams()
-    extracted = extract_team_pitching.expand(team=teams)
+    #teams = get_teams()
+    extracted = extract_team_pitching.expand(team=TEAMS)
     row_counts = load_team_pitching.expand(extract_result=extracted)
     summarize(row_counts)
 
