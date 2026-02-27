@@ -111,7 +111,7 @@ def get_game_data_by_team(team, season, stat_type):
         table_id = "players_standard_{}".format(stat_type)
         table = soup.find('table', {'id': table_id})
         if table is None:
-            raise RuntimeError(f"Table '{table_id}' not found on page")
+            logger.info(f'Table with id {table_id} not found on page')
         data = pd.read_html(StringIO(str(table)))[0]
         
         if not data.empty:
@@ -119,7 +119,7 @@ def get_game_data_by_team(team, season, stat_type):
             data['Season'] = season
             logger.info(f'Game {stat_type} data loaded for {team} in {season}')
     except Exception as error:
-        logger.info(f'Unable to load game {stat_type} data for {team} in {season} with error: {error}')
+        logger.info(f'Unable to load game {stat_type} data for {team} in {season}')
     return postprocess_game_data(data)
 
 def get_season_game_logs(season):
