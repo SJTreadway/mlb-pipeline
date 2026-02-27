@@ -120,7 +120,7 @@ def get_game_data_by_team(team, season, stat_type):
             logger.info(f'Game {stat_type} data loaded for {team} in {season}')
     except Exception as error:
         logger.info(f'Unable to load game {stat_type} data for {team} in {season}')
-    return postprocess_game_data(data)
+    return postprocess_game_data(data) if not data.empty else data
 
 def get_season_game_logs(season):
     event_df = season_game_logs(season)
