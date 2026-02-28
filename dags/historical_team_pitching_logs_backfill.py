@@ -16,6 +16,7 @@ from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.utils.dates import days_ago
 
+from utils.transform_utils import validate_dataframe, clean_team_game_logs
 from utils.snowflake_utils import load_dataframe
 from utils.historical_team_utils import get_game_data_by_team, TEAMS, SEASONS
 
@@ -33,7 +34,7 @@ TARGET_TABLE = "TEAM_PITCHING_LOGS"
     start_date=days_ago(1),
     catchup=False,
     default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=10)},
-    max_active_tasks=4,
+    max_active_tasks=1, # previously 4
     tags=["baseball", "historical", "pitching", "backfill"],
     params={
         "teams": Param(TEAMS, type="array", description="List of team abbreviations to backfill"),
@@ -77,6 +78,8 @@ def historical_team_pitching_logs_backfill():
             return 0
 
         df = pd.read_json(extract_result["data"], orient="split")
+        df = clean_team_game_logs(df)
+        validate_dataframe(df)
 
         rows = load_dataframe(
             df=df,

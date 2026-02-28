@@ -12,71 +12,49 @@ USE SCHEMA HISTORICAL;
 -- Team Batting Game Logs
 CREATE TABLE IF NOT EXISTS BASEBALL.HISTORICAL.TEAM_BATTING_LOGS (
     -- Identifiers
-    Team                        VARCHAR(5),
-    Season                      INTEGER,
-    Game                        INTEGER,
-    Date                        DATE,
-    Home                        BOOLEAN,
-    
-    -- Game Result
-    W                           INTEGER,
-    L                           INTEGER,
-    T                           INTEGER,
-    Win                         INTEGER,
-    Loss                        INTEGER,
-    Save                        VARCHAR(10),
-    
-    -- Runs
-    R                           INTEGER,
-    RA                          INTEGER,
-    
-    -- Hits & Doubles/Triples/HR
-    H                           INTEGER,
-    X2B                         INTEGER,
-    X4B                         INTEGER,
-    HR                          INTEGER,
-    
-    -- RBIs & Runs
-    RBI                        INTEGER,
-    BB                          INTEGER,
-    IBB                        INTEGER,
-    SO                          INTEGER,
-    HBP                         INTEGER,
-    
-    -- Bases
-    SB                         INTEGER,
-    CS                         INTEGER,
-    
-    -- LOB & Errors
-    LOB                        INTEGER,
-    E                          INTEGER,
-    
-    -- Pitchers (for decision)
-    OppStart                   VARCHAR(100),
-    
-    -- Game Info
-    "D/N"                      VARCHAR(1),
-    Attend                     INTEGER,
-    cLI                        FLOAT,
-    WPA                        FLOAT,
-    aLI                        FLOAT,
-    "WPA+"                     FLOAT,
-    "WPA-"                     FLOAT,
-    cWPA                       FLOAT,
-    "cLI+"                     FLOAT,
-    "cLI-"                     FLOAT,
+    TEAM                        VARCHAR(5),
+    SEASON                      INTEGER,
+    DATE                        DATE,
     
     -- Innings
-    Inn                        INTEGER,
+    INN                        FLOAT,
     
-    -- Extra Innings
-    X_Inn                      INTEGER,
+    -- Hits & Doubles/Triples/HR
+    H                           FLOAT,
+    X2B                         FLOAT,
+    X3B                         FLOAT,
+    HR                          FLOAT,
+    
+    -- Runs
+    R                           FLOAT,
+    RBI                         FLOAT,
+    BB                          FLOAT,
+    IBB                         FLOAT,
+    SO                          FLOAT,
+    HBP                         FLOAT,
+    
+    -- Bases
+    SB                          FLOAT,
+    CS                          FLOAT,
+    LOB                         FLOAT,
+
+    OPPSTART                    VARCHAR(100),
+    OPPSTARTTHROWS              VARCHAR(1),
     
     -- Batters
-    BFP                        INTEGER,
-    BF_Pit                     INTEGER,
-    IR                         INTEGER,
-    "IS"                       INTEGER,
+    PA                         FLOAT,
+    AB                         FLOAT,
+    BA                         FLOAT,
+    OBP                        FLOAT,
+    SLG                        FLOAT,
+    OPS                        FLOAT,
+    TB                         FLOAT,
+    GIDP                       FLOAT,
+    SH                         FLOAT,
+    SF                         FLOAT,
+    ROE                        FLOAT,
+    BABIP                      FLOAT,
+    
     
     -- Pipeline metadata
     _loaded_at                 TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -86,77 +64,56 @@ CREATE TABLE IF NOT EXISTS BASEBALL.HISTORICAL.TEAM_BATTING_LOGS (
 -- Team Pitching Game Logs
 CREATE TABLE IF NOT EXISTS BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS (
     -- Identifiers
-    Team                        VARCHAR(5),
-    Season                      INTEGER,
-    Game                        INTEGER,
-    Date                        DATE,
-    Home                        BOOLEAN,
-    
-    -- Game Result
-    W                           INTEGER,
-    L                           INTEGER,
-    T                           INTEGER,
-    Win                         INTEGER,
-    Loss                        INTEGER,
-    Save                        VARCHAR(10),
-    BlownSave                   VARCHAR(10),
-    
-    -- Runs
-    R                           INTEGER,
-    RA                          INTEGER,
-    
-    -- Hits & Doubles/Triples/HR
-    H                           INTEGER,
-    X2B                         INTEGER,
-    X3B                         INTEGER,
-    HR                          INTEGER,
-    
-    -- Walks & Strikeouts
-    BB                          INTEGER,
-    IBB                        INTEGER,
-    SO                          INTEGER,
-    HBP                         INTEGER,
-    
-    -- Wild Pitches & Balks
-    WP                          INTEGER,
-    BK                          INTEGER,
-    
-    -- Batters Faced
-    BF                         INTEGER,
-    
-    -- Pitch Count
-    Pit                        INTEGER,
-    Str                        INTEGER,
-    GSc                        INTEGER,
-    
-    -- Stolen Bases Allowed
-    SB                         INTEGER,
-    CS                         INTEGER,
-    
-    -- LOB
-    LOB                        INTEGER,
-    
-    -- ERA
-    ERA                       FLOAT,
-    
-    -- Game Info
-    "D/N"                     VARCHAR(1),
-    Attend                     INTEGER,
-    cLI                        FLOAT,
-    WPA                        FLOAT,
-    aLI                        FLOAT,
-    "WPA+"                     FLOAT,
-    "WPA-"                     FLOAT,
-    cWPA                       FLOAT,
-    "cLI+"                     FLOAT,
-    "cLI-"                     FLOAT,
+    TEAM                        VARCHAR(5),
+    SEASON                      INTEGER,
+    DATE                        DATE,
+    OPP                         VARCHAR(5),
+    RESULT                      VARCHAR(1),
     
     -- Innings
-    IP                         FLOAT,
-    Inn                        INTEGER,
+    INN                         FLOAT,
+    IP                          FLOAT,
+
+    RS                          FLOAT,
+    RA                          FLOAT,
     
-    -- Extra Innings
-    X_Inn                      INTEGER,
+    -- Hits, Runs, Doubles/Triples/HR
+    H                           FLOAT,
+    R                           FLOAT,
+    X2B                         FLOAT,
+    X3B                         FLOAT,
+    HR                          FLOAT,
+    
+    ER                          FLOAT,
+    RBI                         FLOAT,
+    BB                          FLOAT,
+    IBB                         FLOAT,
+    SO                          FLOAT,
+    HBP                         FLOAT,
+    BK                          FLOAT,
+    WP                          FLOAT,
+    BF                          FLOAT,
+    ERA                         FLOAT,
+    FIP                         FLOAT,
+    GB                          FLOAT,
+    FB                          FLOAT,
+    LD                          FLOAT,
+    PU                          FLOAT,
+    IR                          FLOAT,
+    "IS"                        FLOAT,
+    
+    -- Bases
+    SB                         FLOAT,
+    CS                         FLOAT,
+    PO                         FLOAT,
+
+    -- Batters
+    AB                         FLOAT,
+    GIDP                       FLOAT,
+    SF                         FLOAT,
+    ROE                        FLOAT,
+    BABIP                      FLOAT,
+    
     
     -- Pipeline metadata
     _loaded_at                 TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),

@@ -37,7 +37,7 @@ _URL = "https://www.baseball-reference.com/teams/tgl.cgi?team={}&t={}&year={}"
 
 SESSION = BRefSession()
 
-def postprocess_game_data(data: pd.DataFrame) -> pd.DataFrame:
+def postprocess_game_batting_data(data: pd.DataFrame) -> pd.DataFrame:
     if data.empty:
         return data
 
@@ -102,6 +102,75 @@ def postprocess_game_data(data: pd.DataFrame) -> pd.DataFrame:
     
     return data.reset_index(drop=True)
 
+def postprocess_game_pitching_data(data: pd.DataFrame) -> pd.DataFrame:
+    if data.empty:
+        return data
+
+    # Map scraped columns to database schema
+    column_mapping = {
+        ('Team', ''): 'Team',
+        ('Season', ''): 'Season',
+        ('Unnamed: 2_level_0', 'Date'): 'Date',
+
+        ('Unnamed: 4_level_0', 'Opp'): 'Opp',
+        
+        ('Score', 'Rslt'): 'Result',
+        ('Score', 'Inn'): 'Inn',
+        ('Score', 'RS'): 'RS',
+        ('Score', 'RA'): 'RA',
+
+        ('Pitching Stats', 'IP'): 'IP',
+        ('Pitching Stats', 'H'): 'H',
+        ('Pitching Stats', 'R'): 'R',
+        ('Pitching Stats', 'ER'): 'ER',
+        ('Pitching Stats', 'HR'): 'HR',
+        ('Pitching Stats', 'BB'): 'BB',
+        ('Pitching Stats', 'IBB'): 'IBB',
+        ('Pitching Stats', 'SO'): 'SO',
+        ('Pitching Stats', 'HBP'): 'HBP',
+        ('Pitching Stats', 'BK'): 'BK',
+        ('Pitching Stats', 'WP'): 'WP',
+        ('Pitching Stats', 'BF'): 'BF',
+        ('Pitching Stats', 'ERA'): 'ERA',
+        ('Pitching Stats', 'FIP'): 'FIP',
+        ('Pitching Stats', 'GB'): 'GB',
+        ('Pitching Stats', 'FB'): 'FB',
+        ('Pitching Stats', 'LD'): 'LD',
+        ('Pitching Stats', 'PU'): 'PU',
+        ('Pitching Stats', 'PU'): 'PU',
+        ('Pitching Stats', 'IR'): 'IR',
+        ('Pitching Stats', 'IS'): 'IS',
+        ('Pitching Stats', 'SB'): 'SB',
+        ('Pitching Stats', 'CS'): 'CS',
+        ('Pitching Stats', 'PO'): 'PO',
+        ('Pitching Stats', 'AB'): 'AB',
+        ('Pitching Stats', '2B'): 'X2B',
+        ('Pitching Stats', '3B'): 'X3B',
+        ('Pitching Stats', 'GIDP'): 'GIDP',
+        ('Pitching Stats', 'SF'): 'SF',
+        ('Pitching Stats', 'ROE'): 'ROE',
+        ('Pitching Stats', 'BAbip'): 'BABIP',
+
+    }
+    
+    # Filter to only columns present in the mapping
+    valid_cols = [col for col in data.columns if col in column_mapping]
+    data = data[valid_cols]
+    
+    # Directly assign flat column names — rename() doesn't handle tuple columns correctly
+    data.columns = [column_mapping[col] for col in data.columns]
+    
+    # Convert numeric columns
+    numeric_cols = data.columns.difference(['Team', 'Season', 'Date', 'Opp', 'Result'])
+    data[numeric_cols] = data[numeric_cols].apply(pd.to_numeric, errors="coerce")
+    data = data.dropna(subset=numeric_cols, how='all')  # drop pure header rows
+
+    # Force dtypes so Snowflake doesn't see any object/variant columns
+    for col in numeric_cols:
+        data[col] = data[col].astype('float64')
+    
+    return data.reset_index(drop=True)
+
 def get_game_data_by_team(team, season, stat_type):
     t_param = "b" if stat_type == "batting" else "p"
     data = pd.DataFrame()
@@ -121,7 +190,9 @@ def get_game_data_by_team(team, season, stat_type):
             logger.info(f'Game {stat_type} data loaded for {team} in {season}')
     except Exception as error:
         logger.info(f'Unable to load game {stat_type} data for {team} in {season}')
-    return postprocess_game_data(data) if data is not None and not data.empty else data
+    if data is None or data.empty:
+        return data
+    return postprocess_game_batting_data(data) if t_param == 'b' else postprocess_game_pitching_data(data)
 
 def get_season_game_logs(season):
     event_df = season_game_logs(season)
