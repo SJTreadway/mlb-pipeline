@@ -16,9 +16,8 @@ from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.utils.dates import days_ago
 
-from utils.transform_utils import validate_dataframe, clean_team_game_logs
 from utils.snowflake_utils import load_dataframe
-from utils.historical_team_utils import get_season_game_logs, SEASONS
+from utils.historical_team_utils import get_season_game_logs
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +25,8 @@ SNOWFLAKE_DATABASE = "BASEBALL"
 SNOWFLAKE_SCHEMA = "HISTORICAL"
 TARGET_TABLE = "RETROSHEET_EVENTS"
 
+# separate from bref since retrosheet doesn't have 2024+ data
+SEASONS = list[int](range(1980, 2024))
 
 @dag(
     dag_id="historical_retrosheet_events_backfill",
@@ -34,7 +35,7 @@ TARGET_TABLE = "RETROSHEET_EVENTS"
     start_date=days_ago(1),
     catchup=False,
     default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=10)},
-    max_active_tasks=1, # previously 4
+    max_active_tasks=4,
     tags=["baseball", "historical", "retrosheet", "events", "backfill"],
     params={
         "seasons": Param(SEASONS, type="array", description="List of seasons to backfill")
@@ -71,8 +72,6 @@ def historical_retrosheet_events_backfill():
             return 0
 
         df = pd.read_json(extract_result["data"], orient="split")
-        df = clean_team_game_logs(df)
-        validate_dataframe(df)
 
         rows = load_dataframe(
             df=df,

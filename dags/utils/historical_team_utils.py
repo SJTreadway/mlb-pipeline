@@ -12,8 +12,10 @@ from io import StringIO
 import pandas as pd
 import numpy as np
 from bs4 import BeautifulSoup
-from pybaseball import cache, season_game_logs
+from pybaseball import cache
 from utils.bref import BRefSession
+from utils.retrosheet import season_game_logs
+from github import Github
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ TEAMS = [
 
 cache.enable()
 
-_URL = "https://www.baseball-reference.com/teams/tgl.cgi?team={}&t={}&year={}"
+_BREF_URL = "https://www.baseball-reference.com/teams/tgl.cgi?team={}&t={}&year={}"
 
 SESSION = BRefSession()
 
@@ -174,13 +176,14 @@ def postprocess_game_pitching_data(data: pd.DataFrame) -> pd.DataFrame:
 
 def postprocess_retrosheet_event_data(event_df, season):
     event_df.drop(columns=[
-        'date', 'game_num', 'misc', 'acquisition_info', 'visiting_team_game_num', 'home_team_game_num',
+        'date', 'game_num', 'day_of_week', 'misc', 'acquisition_info', 'visiting_team_game_num', 'home_team_game_num',
         'completion_info', 'forfeit_info', 'protest_info', 'visiting_line_score',
         'home_line_score', 'ump_home_name', 'ump_first_name', 'ump_second_name',
         'ump_third_name', 'ump_lf_name', 'ump_rf_name', 'visiting_manager_name',
         'home_manager_name', 'winning_pitcher_id', 'winning_pitcher_name', 'losing_pitcher_id',
         'losing_pitcher_name', 'save_pitcher_id', 'save_pitcher_name', 'game_winning_rbi_id',
-        'game_winning_rbi_name',
+        'game_winning_rbi_name', 'num_outs', 'day_night', 'park_id', 'attendance', 'time_of_game_minutes', 'ump_home_id',
+        'ump_first_id', 'ump_second_id', 'ump_third_id', 'ump_lf_id', 'ump_rf_id', 'visiting_2b_id',
     ], axis=1, inplace=True)
 
     event_df.rename(columns={
@@ -279,7 +282,6 @@ def postprocess_retrosheet_event_data(event_df, season):
         'home_pb': 'PB_h',
         'home_dp': 'x2P_h',
         'home_tp': 'x3P_h',
-        'home_starting_pitcher_id': 'SP_h',
         'home_starting_pitcher_id': 'starting_pitcher_id_h',
         'home_starting_pitcher_name': 'starting_pitcher_name_h',
         'home_1_id': 'batter1_id_h',
@@ -358,7 +360,7 @@ def get_game_data_by_team(team, season, stat_type):
     t_param = "b" if stat_type == "batting" else "p"
     data = pd.DataFrame()
     try:
-        content = SESSION.get(_URL.format(team, t_param, season)).content
+        content = SESSION.get(_BREF_URL.format(team, t_param, season)).content
         
         soup = BeautifulSoup(content, 'lxml')
         table_id = "players_standard_{}".format(stat_type)
@@ -390,7 +392,6 @@ def get_season_game_logs(season):
 
     print(f'Event data loaded for {season}')
     return postprocess_retrosheet_event_data(event_df, season)
-
 
 # create team dataframe to easily aggregate rolling window game data
 def create_team_df(df, team):
