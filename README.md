@@ -43,7 +43,7 @@ BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS
 ## Project structure
 
 ```
-statcast-pipeline/
+mlb-pipeline/
 ├── docker-compose.yml          # Airflow + Postgres (metadata DB)
 ├── .env.example                # Environment variable template
 ├── dags/
@@ -74,7 +74,7 @@ statcast-pipeline/
 
 ```bash
 git clone <your-repo>
-cd statcast-pipeline
+cd mlb-pipeline
 cp .env.example .env
 # Edit .env with your Snowflake credentials
 # Add a GitHub token (GH_TOKEN) for Retrosheet API access - see .env.example
@@ -114,7 +114,7 @@ Admin → Connections → Add:
 ### 5. Run the tests
 
 ```bash
-pip install pybaseball pandas pytest beautifulsoup4 lxml
+pip install pybaseball pandas pytest beautifulsoup4 curl_cffi pygithub
 pytest tests/ -v
 ```
 
