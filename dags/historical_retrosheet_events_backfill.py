@@ -17,7 +17,7 @@ from airflow.models.param import Param
 from airflow.utils.dates import days_ago
 
 from utils.snowflake_utils import load_dataframe
-from utils.historical_team_utils import get_season_game_logs
+from utils.retrosheet import get_season_game_logs
 
 logger = logging.getLogger(__name__)
 
