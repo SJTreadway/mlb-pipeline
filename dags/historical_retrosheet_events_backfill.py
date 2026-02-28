@@ -18,6 +18,7 @@ from airflow.utils.dates import days_ago
 
 from utils.snowflake_utils import load_dataframe
 from utils.retrosheet import get_season_game_logs
+from utils.odds import get_historical_odds
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,28 @@ def historical_retrosheet_events_backfill():
         }
 
     @task
-    def load_retrosheet_events(extract_result: dict) -> int:
-        """Load one season's retrosheet events data into Snowflake."""
+    def extract_historical_odds_data(extract_result: dict) -> dict:
+        """Extract Historical Odds data for each row."""
+        logger.info(f"Extracting Historical Odds data.")
+
+        if not extract_result.get("data"):
+            return 0
+
+        df = pd.read_json(extract_result["data"], orient="split")
+        df = get_historical_odds(df)
+
+        if df is None or df.empty:
+            logger.warning(f"No Historical Odds data")
+            return {"data": None, "row_count": 0}
+
+        return {
+            "data": df.to_json(orient="split", date_format="iso"),
+            "row_count": len(df),
+        }
+
+    @task
+    def load_retrosheet_events_with_odds(extract_result: dict) -> int:
+        """Load one season's retrosheet events with odds data into Snowflake."""
         if not extract_result.get("data"):
             return 0
 
@@ -84,11 +105,12 @@ def historical_retrosheet_events_backfill():
     @task
     def summarize(row_counts: list[int]) -> None:
         total = sum(row_counts)
-        logger.info(f"Retrosheet event data backfill complete. Total rows loaded: {total:,}")
+        logger.info(f"Retrosheet event and Historical Odds data backfill complete. Total rows loaded: {total:,}")
 
     seasons = get_seasons()
     extracted = extract_retrosheet_events_by_season.expand(season=seasons)
-    row_counts = load_retrosheet_events.expand(extract_result=extracted)
+    extracted_with_odds = extract_historical_odds_data.expand(extract_result=extracted)
+    row_counts = load_retrosheet_events_with_odds.expand(extract_result=extracted_with_odds)
     summarize(row_counts)
 
 

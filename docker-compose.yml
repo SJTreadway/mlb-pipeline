@@ -9,6 +9,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
     AIRFLOW__CORE__DAG_RUN_CONF_OVERRIDES_PARAMS: 'true'
+    AIRFLOW__LOGGING__WORKER_LOG_SERVER_PORT: 0
     AIRFLOW_CONN_SNOWFLAKE_DEFAULT: >-
       snowflake://${SNOWFLAKE_USER}:${SNOWFLAKE_PASSWORD}@${SNOWFLAKE_ACCOUNT}
       /?warehouse=${SNOWFLAKE_WAREHOUSE}

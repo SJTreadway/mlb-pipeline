@@ -1,4 +1,4 @@
-# Statcast Pipeline (Historical Team Logs + Retrosheet Events)
+# MLB Pipeline (Historical Team Logs + Retrosheet Events)
 
 An Airflow data pipeline that ingests historical MLB team batting and pitching game logs from Baseball Reference and game events data from Retrosheet into Snowflake.
 

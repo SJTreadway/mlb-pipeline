@@ -191,6 +191,13 @@ CREATE TABLE IF NOT EXISTS BASEBALL.HISTORICAL.RETROSHEET_EVENTS (
     ERR_162_V           FLOAT,
     ERR_90_V            FLOAT,
     ERR_30_V            FLOAT,
+
+    -- Odds
+    IMPLIED_PROB_H      FLOAT,
+    IMPLIED_PROB_V      FLOAT,
+    IMPLIED_PROB_H_MID  FLOAT,
+    OVER_UNDER_LINE     FLOAT,
+    OVER_UNDER_RESULT   VARCHAR(1),
     
     -- Pipeline metadata
     _loaded_at                  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
