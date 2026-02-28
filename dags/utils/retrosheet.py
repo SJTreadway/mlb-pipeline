@@ -68,7 +68,7 @@ GAMELOG_COLUMNS = [
     'home_starting_pitcher_id', 'home_starting_pitcher_name',
     'visiting_1_id', 'visiting_1_name', 'visiting_1_pos',
     'visiting_2_id', 'visiting_2_name', 'visiting_2_pos',
-    'visiting_2b_id', 'visiting_3_name', 'visiting_3_pos',
+    'visiting_3_id', 'visiting_3_name', 'visiting_3_pos',
     'visiting_4_id', 'visiting_4_name', 'visiting_4_pos',
     'visiting_5_id', 'visiting_5_name', 'visiting_5_pos',
     'visiting_6_id', 'visiting_6_name', 'visiting_6_pos',
@@ -114,7 +114,7 @@ def postprocess_retrosheet_event_data(event_df, season):
         'home_manager_name', 'winning_pitcher_id', 'winning_pitcher_name', 'losing_pitcher_id',
         'losing_pitcher_name', 'save_pitcher_id', 'save_pitcher_name', 'game_winning_rbi_id',
         'game_winning_rbi_name', 'num_outs', 'day_night', 'park_id', 'attendance', 'ump_home_id',
-        'ump_first_id', 'ump_second_id', 'ump_third_id', 'ump_lf_id', 'ump_rf_id', 'visiting_2b_id',
+        'ump_first_id', 'ump_second_id', 'ump_third_id', 'ump_lf_id', 'ump_rf_id',
     ], axis=1, inplace=True)
 
     event_df.rename(columns={
@@ -285,7 +285,7 @@ def postprocess_retrosheet_event_data(event_df, season):
 
 # strip away suffix, e.g., '_h', '_v', for given column (retrosheet events data)
 def strip_suffix(col, suffix):
-  return col[:-len(suffix)] if col.endswith(suffix) else col
+    return col[:-len(suffix)] if col.endswith(suffix) else col
 
 def get_season_game_logs(season):
     event_df = season_game_logs(season)
