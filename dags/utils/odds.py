@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import requests
 from io import StringIO
+import time
 
 ODDSHARK_NUM_TO_TEAM_DICT = {
     26995 + i: team for i, team in enumerate([
@@ -50,6 +51,7 @@ def get_historical_odds(event_df):
             df_temp['date_dblhead'] = (df_temp.date_numeric.astype(str) + df_temp.dblheader_num.astype(str)).astype(int)
             df_temp.set_index('date_dblhead', inplace=True)
             df_odds_dict[team_name][season] = df_temp
+            time.sleep(1)
 
     implied_prob_h = np.zeros(df.shape[0])
     implied_prob_v = np.zeros(df.shape[0])
@@ -78,4 +80,8 @@ def get_historical_odds(event_df):
     df['implied_prob_h_mid'] = (implied_prob_h + (1-implied_prob_v)) / 2
     df['over_under_line'] = over_under
     df['over_under_result'] = ou_result
+
+    # drop rows where implied_prob_h is 0 when it's not expected to be (season >= 2022)
+    indices_to_drop = df[(df.season >= 2022) & (df.implied_prob_h == 0)].index
+    df = df.drop(indices_to_drop)
     return df

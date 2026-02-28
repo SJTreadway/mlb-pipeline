@@ -35,7 +35,7 @@ SEASONS = list[int](range(1980, 2024))
     schedule_interval=None,
     start_date=days_ago(1),
     catchup=False,
-    default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=10)},
+    default_args={"owner": "steven.treadway", "retries": 2, "retry_delay": timedelta(minutes=3)},
     max_active_tasks=4,
     tags=["baseball", "historical", "retrosheet", "events", "backfill"],
     params={
