@@ -102,8 +102,11 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
         log.info(f"No rows to upsert to {table}")
         return
 
-    # replace NaN with None for Snowflake compatibility
-    df = df.where(pd.notna(df), other=None)
+    df = df.copy()
+    for col in df.columns:
+        df[col] = df[col].apply(
+            lambda x: None if (isinstance(x, float) and np.isnan(x)) else x
+        )
 
     # add missing columns first
     _add_missing_columns(conn, df, table)
@@ -578,7 +581,13 @@ def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
         batter_feat_rows.append(df)
 
     if batter_feat_rows:
-        batter_features = pd.concat(batter_feat_rows, ignore_index=True)
+        batter_features = batter_features[
+            [
+                c
+                for c in batter_features.columns
+                if isinstance(c, str) and str(c).lower() != "nan" and pd.notna(c)
+            ]
+        ]
         _upsert_to_snowflake(
             conn,
             batter_features,
@@ -623,7 +632,13 @@ def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
         pitcher_feat_rows.append(df)
 
     if pitcher_feat_rows:
-        pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
+        pitcher_features = pitcher_features[
+            [
+                c
+                for c in pitcher_features.columns
+                if isinstance(c, str) and str(c).lower() != "nan" and pd.notna(c)
+            ]
+        ]
         _upsert_to_snowflake(
             conn,
             pitcher_features,
