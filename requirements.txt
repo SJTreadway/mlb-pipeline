@@ -8,3 +8,4 @@ python-dotenv
 beautifulsoup4
 curl_cffi
 pygithub
+cryptography

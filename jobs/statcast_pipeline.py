@@ -38,10 +38,26 @@ def _get_snowflake_conn():
 
         return SnowflakeHook(snowflake_conn_id="snowflake_default").get_conn()
     except Exception:
+        import snowflake.connector
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.backends import default_backend
+
+        private_key_str = os.environ["SNOWFLAKE_PRIVATE_KEY"]
+        private_key = serialization.load_pem_private_key(
+            private_key_str.encode(),
+            password=None,
+            backend=default_backend(),
+        )
+        private_key_bytes = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+
         return snowflake.connector.connect(
             account=os.environ["SNOWFLAKE_ACCOUNT"],
             user=os.environ["SNOWFLAKE_USER"],
-            password=os.environ["SNOWFLAKE_PASSWORD"],
+            private_key=private_key_bytes,
             database=DATABASE,
             warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
             role=os.environ.get("SNOWFLAKE_ROLE", "SYSADMIN"),
