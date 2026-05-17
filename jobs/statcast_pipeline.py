@@ -70,12 +70,14 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
         log.info(f"No rows to upsert to {table}")
         return
 
+    log.info(f"Upserting {len(df)} rows to {DATABASE}.{SCHEMA}.{table}")
     cursor = conn.cursor()
     cols = df.columns.tolist()
     placeholders = ", ".join(["%s"] * len(cols))
     col_str = ", ".join(cols)
 
-    # delete existing rows first then insert
+    # delete existing rows
+    deleted = 0
     for _, row in df.iterrows():
         where = " AND ".join([f"{c} = %s" for c in unique_cols])
         vals = tuple(row[c] for c in unique_cols)
@@ -83,14 +85,23 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
             f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}",
             vals,
         )
+        deleted += cursor.rowcount
 
-    # bulk insert
+    log.info(f"Deleted {deleted} existing rows from {table}")
+
+    # insert
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
-    cursor.executemany(sql, data)
+    for row in data:
+        try:
+            cursor.execute(sql, row)
+        except Exception as e:
+            log.error(f"Insert failed for row {row}: {e}")
+            raise
+
     conn.commit()
     cursor.close()
-    log.info(f"Upserted {len(df)} rows to {DATABASE}.{SCHEMA}.{table}")
+    log.info(f"Inserted {len(data)} rows to {table}")
 
 
 # ── Transform helpers ─────────────────────────────────────────────────────────
