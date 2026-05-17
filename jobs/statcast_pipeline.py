@@ -74,46 +74,35 @@ def _get_table_columns(conn, table):
 
 def _upsert_to_snowflake(conn, df, table, unique_cols):
     if df.empty:
+        log.info(f"No rows to upsert to {table}")
         return
-    # only keep columns that exist in the table
+
     table_cols = _get_table_columns(conn, table)
     df = df[[c for c in df.columns if c.lower() in table_cols]]
     if df.empty:
         log.warning(f"No matching columns for {table}")
         return
 
-    log.info(f"Upserting {len(df)} rows to {DATABASE}.{SCHEMA}.{table}")
     cursor = conn.cursor()
     cols = df.columns.tolist()
     placeholders = ", ".join(["%s"] * len(cols))
     col_str = ", ".join(cols)
 
     # delete existing rows
-    deleted = 0
+    where = " AND ".join([f"{c} = %s" for c in unique_cols])
     for _, row in df.iterrows():
-        where = " AND ".join([f"{c} = %s" for c in unique_cols])
         vals = tuple(row[c] for c in unique_cols)
-        cursor.execute(
-            f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}",
-            vals,
-        )
-        deleted += cursor.rowcount
+        cursor.execute(f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}", vals)
 
-    log.info(f"Deleted {deleted} existing rows from {table}")
-
-    # insert
+    # bulk insert
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
     for row in data:
-        try:
-            cursor.execute(sql, row)
-        except Exception as e:
-            log.error(f"Insert failed for row {row}: {e}")
-            raise
+        cursor.execute(sql, row)
 
     conn.commit()
     cursor.close()
-    log.info(f"Inserted {len(data)} rows to {table}")
+    log.info(f"Upserted {len(df)} rows to {table}")
 
 
 # ── Transform helpers ─────────────────────────────────────────────────────────
