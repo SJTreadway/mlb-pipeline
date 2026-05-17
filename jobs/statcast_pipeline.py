@@ -287,7 +287,7 @@ def _transform_pitcher_game(df):
 
 
 def get_yesterdays_players() -> dict:
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
     log.info(f"Fetching players for {yesterday}")
 
     # get game IDs from schedule
