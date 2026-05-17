@@ -102,7 +102,6 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
 
     conn.commit()
     cursor.close()
-    log.info(f"Upserted {len(df)} rows to {table}")
 
 
 # ── Transform helpers ─────────────────────────────────────────────────────────
