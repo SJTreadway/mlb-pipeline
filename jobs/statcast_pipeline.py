@@ -72,11 +72,40 @@ def _get_table_columns(conn, table):
     return cols
 
 
+def _add_missing_columns(conn, df, table):
+    """Add any columns in df that don't exist in the table yet."""
+    type_map = {
+        "int64": "INTEGER",
+        "float64": "FLOAT",
+        "object": "VARCHAR(50)",
+        "bool": "BOOLEAN",
+        "datetime64[ns]": "DATE",
+    }
+    table_cols = _get_table_columns(conn, table)
+    cursor = conn.cursor()
+    for col in df.columns:
+        if col.lower() not in table_cols:
+            dtype = type_map.get(str(df[col].dtype), "VARCHAR(50)")
+            try:
+                cursor.execute(
+                    f"ALTER TABLE {DATABASE}.{SCHEMA}.{table} ADD COLUMN {col} {dtype}"
+                )
+                log.info(f"Added column {col} ({dtype}) to {table}")
+            except Exception as e:
+                log.warning(f"Could not add column {col}: {e}")
+    conn.commit()
+    cursor.close()
+
+
 def _upsert_to_snowflake(conn, df, table, unique_cols):
     if df.empty:
         log.info(f"No rows to upsert to {table}")
         return
 
+    # add missing columns first
+    _add_missing_columns(conn, df, table)
+
+    # only keep columns that exist in table
     table_cols = _get_table_columns(conn, table)
     df = df[[c for c in df.columns if c.lower() in table_cols]]
     if df.empty:
@@ -87,9 +116,9 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     cols = df.columns.tolist()
     placeholders = ", ".join(["%s"] * len(cols))
     col_str = ", ".join(cols)
+    where = " AND ".join([f"{c} = %s" for c in unique_cols])
 
     # delete existing rows
-    where = " AND ".join([f"{c} = %s" for c in unique_cols])
     for _, row in df.iterrows():
         vals = tuple(row[c] for c in unique_cols)
         cursor.execute(f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}", vals)
