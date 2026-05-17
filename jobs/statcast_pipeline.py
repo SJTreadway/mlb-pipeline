@@ -64,9 +64,22 @@ def _get_snowflake_conn():
         )
 
 
+def _get_table_columns(conn, table):
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT * FROM {DATABASE}.{SCHEMA}.{table} LIMIT 0")
+    cols = [desc[0].lower() for desc in cursor.description]
+    cursor.close()
+    return cols
+
+
 def _upsert_to_snowflake(conn, df, table, unique_cols):
     if df.empty:
-        log.info(f"No rows to upsert to {table}")
+        return
+    # only keep columns that exist in the table
+    table_cols = _get_table_columns(conn, table)
+    df = df[[c for c in df.columns if c.lower() in table_cols]]
+    if df.empty:
+        log.warning(f"No matching columns for {table}")
         return
 
     log.info(f"Upserting {len(df)} rows to {DATABASE}.{SCHEMA}.{table}")
