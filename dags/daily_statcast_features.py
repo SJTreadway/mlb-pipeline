@@ -42,9 +42,23 @@ default_args = {
 
 
 def _get_snowflake_conn():
-    from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+    """Get Snowflake connection — works in both Airflow and standalone."""
+    try:
+        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 
-    return SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
+        return SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID).get_conn()
+    except Exception:
+        import snowflake.connector
+
+        return snowflake.connector.connect(
+            account=os.environ["SNOWFLAKE_ACCOUNT"],
+            user=os.environ["SNOWFLAKE_USER"],
+            password=os.environ["SNOWFLAKE_PASSWORD"],
+            database=os.environ.get("SNOWFLAKE_DATABASE", "BASEBALL"),
+            warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
+            role=os.environ.get("SNOWFLAKE_ROLE", "SYSADMIN"),
+            schema=SCHEMA,
+        )
 
 
 def _rolling_sum(df, col, winsize):
@@ -221,13 +235,12 @@ def _transform_pitcher_game(df):
     return pd.DataFrame(rows)
 
 
-def _upsert_to_snowflake(hook, df, table, unique_cols):
+def _upsert_to_snowflake(conn, df, table, unique_cols):
     """Upsert DataFrame rows to Snowflake table."""
     if df.empty:
         log.info(f"No rows to upsert to {table}")
         return
 
-    conn = hook.get_conn()
     cursor = conn.cursor()
 
     cols = df.columns.tolist()
@@ -310,11 +323,10 @@ def daily_statcast_features():
     @task()
     def fetch_and_load_batter_stats(player_info: dict) -> int:
         """Pull Statcast batter data for yesterday → Snowflake."""
-        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+        conn = _get_snowflake_conn()
 
         game_date = player_info["date"]
         batter_ids = player_info["batter_ids"]
-        hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
         total_rows = 0
 
         for mlbam_id in batter_ids:
@@ -343,11 +355,10 @@ def daily_statcast_features():
     @task()
     def fetch_and_load_pitcher_stats(player_info: dict) -> int:
         """Pull Statcast pitcher data for yesterday → Snowflake."""
-        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+        conn = _get_snowflake_conn()
 
         game_date = player_info["date"]
         pitcher_ids = player_info["pitcher_ids"]
-        hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
         total_rows = 0
 
         for mlbam_id in pitcher_ids:
@@ -375,10 +386,7 @@ def daily_statcast_features():
     @task()
     def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
         """Compute rolling features from raw game tables → feature tables."""
-        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
-
-        hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
-        conn = hook.get_conn()
+        conn = _get_snowflake_conn()
 
         # pull all batter game history
         batter_df = pd.read_sql(
@@ -537,12 +545,12 @@ def daily_statcast_features():
     def update_game_results(**context) -> int:
         """Fetch yesterday's game outcomes from MLB Stats API → Snowflake."""
         import requests
-        from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+
+        conn = _get_snowflake_conn()
 
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime(
             "%Y-%m-%d"
         )
-        hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
 
         resp = requests.get(
             f"{MLB_API}/schedule",
@@ -580,7 +588,7 @@ def daily_statcast_features():
         if rows:
             df = pd.DataFrame(rows)
             _upsert_to_snowflake(
-                hook,
+                conn,
                 df,
                 "GAME_RESULTS",
                 ["game_pk"],

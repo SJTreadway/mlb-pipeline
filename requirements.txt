@@ -1,0 +1,10 @@
+pybaseball==2.2.7
+pandas==2.1.4
+pyarrow==14.0.1
+numpy
+snowflake-connector-python[pandas]
+requests
+python-dotenv
+beautifulsoup4
+curl_cffi
+pygithub
