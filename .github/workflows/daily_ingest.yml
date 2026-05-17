@@ -7,16 +7,16 @@ on:
 
 jobs:
   ingest:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - run: pip install -r requirements.txt
-      - run: python jobs/daily_statcast_ingest.py
+
+      - name: Install dependencies
+        run: python3.11 -m pip install -r requirements.txt
+
+      - name: Run daily statcast ingestion
+        run: python3.11 jobs/daily_statcast_ingest.py
         env:
           SNOWFLAKE_ACCOUNT:   ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:      ${{ secrets.SNOWFLAKE_USER }}

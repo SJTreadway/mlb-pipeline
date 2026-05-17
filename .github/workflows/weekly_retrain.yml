@@ -7,16 +7,16 @@ on:
 
 jobs:
   retrain:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - run: pip install -r requirements.txt
-      - run: python jobs/retrain_models.py
+
+      - name: Install dependencies
+        run: python3.11 -m pip install -r requirements.txt
+
+      - name: Run weekly model retrain
+        run: python3.11 jobs/retrain_models.py
         env:
           SNOWFLAKE_ACCOUNT:   ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:      ${{ secrets.SNOWFLAKE_USER }}
