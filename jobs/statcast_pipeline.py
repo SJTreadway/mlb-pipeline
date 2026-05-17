@@ -74,17 +74,18 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     cols = df.columns.tolist()
     placeholders = ", ".join(["%s"] * len(cols))
     col_str = ", ".join(cols)
-    update_str = ", ".join(
-        [f"{c} = EXCLUDED.{c}" for c in cols if c not in unique_cols]
-    )
-    conflict_str = ", ".join(unique_cols)
 
-    sql = f"""
-        INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str})
-        VALUES ({placeholders})
-        ON CONFLICT ({conflict_str}) DO UPDATE SET {update_str}
-    """
+    # delete existing rows first then insert
+    for _, row in df.iterrows():
+        where = " AND ".join([f"{c} = %s" for c in unique_cols])
+        vals = tuple(row[c] for c in unique_cols)
+        cursor.execute(
+            f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}",
+            vals,
+        )
 
+    # bulk insert
+    sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
     cursor.executemany(sql, data)
     conn.commit()
