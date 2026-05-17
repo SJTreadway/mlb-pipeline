@@ -290,14 +290,10 @@ def get_yesterdays_players() -> dict:
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     log.info(f"Fetching players for {yesterday}")
 
-    # get all players who appeared in yesterday's boxscores
+    # get game IDs from schedule
     resp = requests.get(
         f"{MLB_API}/schedule",
-        params={
-            "sportId": 1,
-            "date": yesterday,
-            "hydrate": "boxscore",
-        },
+        params={"sportId": 1, "date": yesterday},
         timeout=15,
     )
     resp.raise_for_status()
@@ -307,19 +303,30 @@ def get_yesterdays_players() -> dict:
 
     for date_obj in resp.json().get("dates", []):
         for game in date_obj.get("games", []):
-            boxscore = game.get("boxscore", {})
-            for side in ["home", "away"]:
-                team = boxscore.get("teams", {}).get(side, {})
-                players = team.get("players", {})
-                for player_key, player in players.items():
-                    pos = player.get("position", {}).get("abbreviation", "")
-                    pid = player.get("person", {}).get("id")
-                    if not pid:
-                        continue
-                    if pos == "P":
-                        pitcher_ids.add(pid)
-                    else:
-                        batter_ids.add(pid)
+            game_pk = game["gamePk"]
+            try:
+                # fetch boxscore directly per game
+                box_resp = requests.get(
+                    f"{MLB_API}/game/{game_pk}/boxscore",
+                    timeout=15,
+                )
+                box_resp.raise_for_status()
+                boxscore = box_resp.json()
+
+                for side in ["home", "away"]:
+                    team = boxscore.get("teams", {}).get(side, {})
+                    players = team.get("players", {})
+                    for player_key, player in players.items():
+                        pos = player.get("position", {}).get("abbreviation", "")
+                        pid = player.get("person", {}).get("id")
+                        if not pid:
+                            continue
+                        if pos == "P":
+                            pitcher_ids.add(pid)
+                        else:
+                            batter_ids.add(pid)
+            except Exception as e:
+                log.warning(f"Error fetching boxscore for game {game_pk}: {e}")
 
     log.info(f"Found {len(batter_ids)} batters, {len(pitcher_ids)} pitchers")
     return {
