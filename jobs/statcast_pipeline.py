@@ -287,16 +287,16 @@ def _transform_pitcher_game(df):
 
 
 def get_yesterdays_players() -> dict:
-    """Get all MLBAM IDs who played yesterday from MLB Stats API."""
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     log.info(f"Fetching players for {yesterday}")
 
+    # get all players who appeared in yesterday's boxscores
     resp = requests.get(
         f"{MLB_API}/schedule",
         params={
             "sportId": 1,
             "date": yesterday,
-            "hydrate": "lineups,probablePitcher",
+            "hydrate": "boxscore",
         },
         timeout=15,
     )
@@ -307,13 +307,19 @@ def get_yesterdays_players() -> dict:
 
     for date_obj in resp.json().get("dates", []):
         for game in date_obj.get("games", []):
+            boxscore = game.get("boxscore", {})
             for side in ["home", "away"]:
-                team = game["teams"][side]
-                if "probablePitcher" in team:
-                    pitcher_ids.add(team["probablePitcher"]["id"])
-                side_key = "homePlayers" if side == "home" else "awayPlayers"
-                for p in game.get("lineups", {}).get(side_key, []):
-                    batter_ids.add(p["id"])
+                team = boxscore.get("teams", {}).get(side, {})
+                players = team.get("players", {})
+                for player_key, player in players.items():
+                    pos = player.get("position", {}).get("abbreviation", "")
+                    pid = player.get("person", {}).get("id")
+                    if not pid:
+                        continue
+                    if pos == "P":
+                        pitcher_ids.add(pid)
+                    else:
+                        batter_ids.add(pid)
 
     log.info(f"Found {len(batter_ids)} batters, {len(pitcher_ids)} pitchers")
     return {
@@ -324,7 +330,9 @@ def get_yesterdays_players() -> dict:
 
 
 def fetch_and_load_batter_stats(player_info: dict) -> int:
-    """Pull Statcast batter data for date → Snowflake RAW_BATTER_GAMES."""
+    log.info(
+        f'fetch_and_load_batter_stats called with {len(player_info["batter_ids"])} batters for {player_info["date"]}'
+    )
     game_date = player_info["date"]
     batter_ids = player_info["batter_ids"]
     conn = _get_snowflake_conn()
@@ -332,10 +340,13 @@ def fetch_and_load_batter_stats(player_info: dict) -> int:
 
     for mlbam_id in batter_ids:
         try:
+            log.info(f"Fetching batter {mlbam_id}")
             df = statcast_batter(game_date, game_date, mlbam_id)
             if df is None or df.empty:
+                log.info(f"No data for batter {mlbam_id}")
                 continue
             game_df = _transform_batter_game(df)
+            log.info(f"Transformed {len(game_df)} rows for batter {mlbam_id}")
             if game_df.empty:
                 continue
             _upsert_to_snowflake(
@@ -433,18 +444,21 @@ def update_game_results() -> int:
 def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
     """Recompute rolling features from raw tables → feature tables."""
     conn = _get_snowflake_conn()
+    cursor = conn.cursor()
 
-    batter_df = pd.read_sql(
-        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES ORDER BY mlbam_id, game_date",
-        conn,
+    cursor.execute(
+        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES ORDER BY mlbam_id, game_date"
     )
-    batter_df.columns = batter_df.columns.str.lower()
+    batter_df = pd.DataFrame(
+        cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
+    )
 
-    pitcher_df = pd.read_sql(
-        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES ORDER BY mlbam_id, game_date",
-        conn,
+    cursor.execute(
+        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES ORDER BY mlbam_id, game_date"
     )
-    pitcher_df.columns = pitcher_df.columns.str.lower()
+    pitcher_df = pd.DataFrame(
+        cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
+    )
 
     # ── batter rolling features ───────────────────────────────────────────────
     batter_feat_rows = []
