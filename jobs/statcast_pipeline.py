@@ -348,13 +348,10 @@ def fetch_and_load_batter_stats(player_info: dict) -> int:
 
     for mlbam_id in batter_ids:
         try:
-            log.info(f"Fetching batter {mlbam_id}")
             df = statcast_batter(game_date, game_date, mlbam_id)
             if df is None or df.empty:
-                log.info(f"No data for batter {mlbam_id}")
                 continue
             game_df = _transform_batter_game(df)
-            log.info(f"Transformed {len(game_df)} rows for batter {mlbam_id}")
             if game_df.empty:
                 continue
             _upsert_to_snowflake(
