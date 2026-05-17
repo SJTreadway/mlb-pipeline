@@ -6,7 +6,6 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 
 import requests
-import snowflake.connector
 from pybaseball import statcast_batter, statcast_pitcher
 
 log = logging.getLogger(__name__)
@@ -605,3 +604,19 @@ def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
     conn.close()
     log.info("Rolling features computed and loaded")
     return "success"
+
+
+def check_todays_lineups():
+    """Log how many of today's games have confirmed lineups."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    resp = requests.get(
+        f"{MLB_API}/schedule",
+        params={"sportId": 1, "date": today, "hydrate": "lineups"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    games = resp.json().get("dates", [{}])[0].get("games", [])
+    total = len(games)
+    confirmed = sum(1 for g in games if g.get("lineups", {}).get("homePlayers"))
+    log.info(f"Todays lineups: {confirmed}/{total} confirmed")
+    return confirmed, total

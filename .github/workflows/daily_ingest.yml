@@ -2,7 +2,9 @@
 name: Daily Statcast Ingest
 on:
   schedule:
-    - cron: '0 15 * * *'
+    - cron: '0 16 * * *'  # 11am CST
+    - cron: '0 18 * * *'  # 1pm CST
+    - cron: '0 20 * * *'  # 3pm CST
   workflow_dispatch:
 
 jobs:

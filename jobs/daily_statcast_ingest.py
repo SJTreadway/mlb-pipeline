@@ -10,6 +10,7 @@ from jobs.statcast_pipeline import (
     fetch_and_load_pitcher_stats,
     update_game_results,
     compute_rolling_features,
+    check_todays_lineups,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +20,10 @@ if __name__ == "__main__":
     log.info("Starting daily MLB statcast pipeline")
 
     player_info = get_yesterdays_players()
+
+    # log lineup confirmation status for today
+    check_todays_lineups()
+
     batter_rows = fetch_and_load_batter_stats(player_info)
     pitcher_rows = fetch_and_load_pitcher_stats(player_info)
     update_game_results()
