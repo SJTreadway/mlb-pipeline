@@ -581,6 +581,7 @@ def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
         batter_feat_rows.append(df)
 
     if batter_feat_rows:
+        batter_features = pd.concat(batter_feat_rows, ignore_index=True)
         batter_features = batter_features[
             [
                 c
@@ -632,6 +633,7 @@ def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
         pitcher_feat_rows.append(df)
 
     if pitcher_feat_rows:
+        pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
         pitcher_features = pitcher_features[
             [
                 c
