@@ -427,10 +427,13 @@ def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
         f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES ORDER BY mlbam_id, game_date",
         conn,
     )
+    batter_df.columns = batter_df.columns.str.lower()
+
     pitcher_df = pd.read_sql(
         f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES ORDER BY mlbam_id, game_date",
         conn,
     )
+    pitcher_df.columns = pitcher_df.columns.str.lower()
 
     # ── batter rolling features ───────────────────────────────────────────────
     batter_feat_rows = []
