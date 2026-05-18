@@ -1,208 +1,267 @@
-# MLB Pipeline (Historical Team Logs + Retrosheet Events)
+# MLB Pipeline
 
-An Airflow data pipeline that ingests historical MLB team batting and pitching game logs from Baseball Reference and game events data from Retrosheet into Snowflake.
+A data pipeline that ingests daily MLB Statcast data into Snowflake and maintains historical team logs. Powers the ML models in [mlb_py](https://github.com/SJTreadway/mlb_py).
 
-## What it does
-
-- **Baseball Reference**: Pulls team batting and pitching game logs from Baseball Reference via web scraping
-- **Retrosheet Events**: Pulls game event data from Retrosheet (via pybaseball) including:
-  - Full game box scores (batting, pitching, fielding stats for both teams)
-  - Starting lineups with player IDs and positions
-  - Manager and umpire information
-  - Game metadata (attendance, duration, park, etc.)
-  - Rolling window statistics (162/90/30 game rolling sums for BATAVG, OBP, SLG, OBS, SB, CS, ERR)
-- Cleans and validates the data (column mapping, type coercion)
-- Loads into Snowflake using bulk inserts
-- Manual backfill DAGs triggered by season
+---
 
 ## Architecture
 
 ```
-Baseball Reference                     Retrosheet (pybaseball)
-        │                                      │
-        ▼                                      ▼
-    Web Scraping                        GitHub Raw API
-    (pybaseball)                        (chadwickbureau/retrosheet)
-        │                                      │
-        ▼                                      ▼
-    Airflow DAG                           Airflow DAG
-    ┌────────────────────────────────┐    ┌────────────────────────────────┐
-    │  get_teams → get_seasons      │    │  get_seasons                   │
-    │       → extract_team_batting   │    │       → extract_retrosheet     │
-    │       → extract_team_pitching  │    │       → load_retrosheet_events │
-    │       → load_team_batting      │    └────────────────────────────────┘
-    │       → load_team_pitching     │
-    └────────────────────────────────┘              │
-        │                                           ▼
-        ▼                                     Snowflake
-      Snowflake                          BASEBALL.HISTORICAL.RETROSHEET_EVENTS
-BASEBALL.HISTORICAL.TEAM_BATTING_LOGS
-BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS
+MLB Stats API (boxscores)          Statcast API (pybaseball)
+        │                                    │
+        ▼                                    ▼
+  Game Results                    Batter + Pitcher
+  (outcomes, scores)              pitch-level data
+        │                                    │
+        └──────────────┬─────────────────────┘
+                       ▼
+              GitHub Actions
+              (self-hosted EC2)
+              jobs/daily_statcast_ingest.py
+                       │
+                       ▼
+                   Snowflake
+        ┌──────────────────────────────────┐
+        │  BASEBALL.STATCAST               │
+        │  ├── RAW_BATTER_GAMES            │
+        │  ├── RAW_PITCHER_GAMES           │
+        │  ├── GAME_RESULTS                │
+        │  ├── BATTER_ROLLING_FEATURES     │
+        │  └── PITCHER_ROLLING_FEATURES    │
+        │                                  │
+        │  BASEBALL.HISTORICAL             │
+        │  ├── RETROSHEET_EVENTS           │
+        │  ├── TEAM_BATTING_LOGS           │
+        │  └── TEAM_PITCHING_LOGS          │
+        └──────────────────────────────────┘
 ```
 
-## Project structure
+---
+
+## Project Structure
 
 ```
 mlb-pipeline/
-├── docker-compose.yml          # Airflow + Postgres (metadata DB)
-├── .env.example                # Environment variable template
+├── .github/
+│   └── workflows/
+│       ├── daily_ingest.yml        # Runs 3x daily (11am, 1pm, 3pm CST)
+│       └── weekly_retrain.yml      # Mondays 7am CST — model retraining
 ├── dags/
-│   ├── historical_team_batting_logs_backfill.py   # Team batting logs backfill
-│   ├── historical_team_pitching_logs_backfill.py  # Team pitching logs backfill
-│   ├── historical_retrosheet_events_backfill.py   # Retrosheet events backfill
+│   ├── daily_statcast_features.py  # Daily Statcast ingestion DAG
+│   ├── historical_retrosheet_events_backfill.py
+│   ├── historical_team_batting_logs_backfill.py
+│   ├── historical_team_pitching_logs_backfill.py
 │   └── utils/
-│       ├── historical_team_utils.py  # Scraping + data processing
-│       ├── snowflake_utils.py         # Snowflake connection helpers
-│       ├── transform_utils.py         # Cleaning + validation logic
-│       ├── bref.py                     # Baseball Reference session
-│       └── retrosheet.py               # Retrosheet data fetching + rolling stats
+│       ├── bref.py
+│       ├── historical_team_utils.py
+│       ├── odds.py
+│       ├── retrosheet.py
+│       ├── snowflake_utils.py
+│       └── transform_utils.py
 ├── include/
 │   └── sql/
-│       ├── setup_snowflake_team_game_logs.sql      # Team game logs table setup
-│       └── setup_snowflake_historical_retrosheet_events.sql  # Retrosheet events table
-└── tests/
-    └── test_transform_utils.py # Unit tests
+│       ├── setup_snowflake_batter.sql
+│       ├── setup_snowflake_pitcher.sql
+│       ├── setup_statcast_features.sql
+│       ├── setup_snowflake_historical_team_game_logs.sql
+│       └── setup_snowflake_historical_retrosheet_events.sql
+├── jobs/
+│   ├── statcast_pipeline.py        # Core ingestion logic (no Airflow dependency)
+│   ├── daily_statcast_ingest.py    # GitHub Actions entry point
+│   ├── backfill_statcast.py        # Historical backfill (2015-2025)
+│   └── retrain_models.py           # Weekly model retraining
+├── logs/                           # Airflow scheduler & DAG processor logs
+├── plugins/                        # Airflow plugins (empty)
+├── tests/
+│   └── test_transform_utils.py
+├── docker-compose.yml              # Airflow + Postgres (local development)
+├── Dockerfile
+├── .env.example
+├── .gitignore
+├── Notes.md
+└── requirements.txt
 ```
+
+---
+
+## Daily Pipeline (GitHub Actions)
+
+Runs automatically 3x daily on a self-hosted AWS EC2 runner with a static IP whitelisted in Snowflake.
+
+**Schedule:** 11am, 1pm, 3pm CST — multiple runs ensure lineup confirmation coverage before first pitch.
+
+**Each run:**
+1. Fetches yesterday's boxscores from MLB Stats API → extracts all player IDs
+2. Pulls Statcast pitch-level data per batter → transforms to game-level rows → upserts to `RAW_BATTER_GAMES`
+3. Pulls Statcast pitch-level data per pitcher → transforms to game-level rows → upserts to `RAW_PITCHER_GAMES`
+4. Fetches game outcomes → upserts to `GAME_RESULTS`
+5. Recomputes rolling features for all players → upserts to `BATTER_ROLLING_FEATURES` and `PITCHER_ROLLING_FEATURES`
+6. Logs today's lineup confirmation status
+
+**Rolling windows:**
+- Batters: 7, 14, 30, 75, 162, 350 games
+- Pitchers: 10, 35, 75 games
+
+**Features computed:**
+- Batters: barrel%, EV, hard hit%, sweet spot%, HR/PA, SLG, OBP, OBS, est. wOBA, est. SLG, platoon splits (HR/PA vs RHP/LHP)
+- Pitchers: HR/BF, FB%
+
+---
+
+## Snowflake Schema
+
+### BASEBALL.STATCAST (current — Statcast era)
+
+| Table | Description |
+|-------|-------------|
+| `RAW_BATTER_GAMES` | One row per batter per game — raw counting stats |
+| `RAW_PITCHER_GAMES` | One row per pitcher per game — raw counting stats |
+| `GAME_RESULTS` | Game outcomes — scores, home victory, run diff |
+| `BATTER_ROLLING_FEATURES` | Pre-computed rolling features per batter |
+| `PITCHER_ROLLING_FEATURES` | Pre-computed rolling features per pitcher |
+
+### BASEBALL.HISTORICAL (legacy — Retrosheet era)
+
+| Table | Description |
+|-------|-------------|
+| `RETROSHEET_EVENTS` | 98,000+ games (1980-2025) with team rolling stats |
+| `TEAM_BATTING_LOGS` | Team batting game logs (Baseball Reference) |
+| `TEAM_PITCHING_LOGS` | Team pitching game logs (Baseball Reference) |
+
+---
 
 ## Setup
 
 ### Prerequisites
-- Docker + Docker Compose
-- A Snowflake account
+- Docker + Docker Compose (for local Airflow)
+- Snowflake account
+- AWS EC2 instance (self-hosted GitHub Actions runner)
 
 ### 1. Clone and configure
 
 ```bash
-git clone <your-repo>
+git clone https://github.com/SJTreadway/mlb-pipeline.git
 cd mlb-pipeline
 cp .env.example .env
 # Edit .env with your Snowflake credentials
-# Add a GitHub token (GH_TOKEN) for Retrosheet API access - see .env.example
 ```
 
-### 2. Set up Snowflake
+### 2. Set up Snowflake tables
 
-Run the SQL setup scripts in your Snowflake worksheet:
+Run in your Snowflake worksheet:
 
-- `include/sql/setup_snowflake_team_game_logs.sql` - Creates team batting/pitching logs tables
-- `include/sql/setup_snowflake_historical_retrosheet_events.sql` - Creates Retrosheet events table
+```bash
+include/sql/setup_snowflake_statcast.sql
+include/sql/setup_snowflake_team_game_logs.sql
+include/sql/setup_snowflake_historical_retrosheet_events.sql
+```
 
-These create:
-- The `BASEBALL` database with `HISTORICAL` schema
-- `BASEBALL.HISTORICAL.TEAM_BATTING_LOGS` - Team batting game logs (Baseball Reference)
-- `BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS` - Team pitching game logs (Baseball Reference)
-- `BASEBALL.HISTORICAL.RETROSHEET_EVENTS` - Game events with rolling window stats (Retrosheet)
+### 3. Add GitHub Secrets
 
-### 3. Start Airflow
+```
+SNOWFLAKE_ACCOUNT
+SNOWFLAKE_USER
+SNOWFLAKE_PRIVATE_KEY    # RSA key pair authentication
+SNOWFLAKE_DATABASE
+SNOWFLAKE_WAREHOUSE
+SNOWFLAKE_ROLE
+YEAR
+```
+
+### 4. Set up self-hosted runner (EC2)
+
+```bash
+# on EC2 instance
+mkdir actions-runner && cd actions-runner
+# follow GitHub repo → Settings → Actions → Runners → New self-hosted runner
+./config.sh --url https://github.com/SJTreadway/mlb-pipeline --token YOUR_TOKEN
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+
+Whitelist your EC2 static IP in your Snowflake network policy.
+
+### 5. Local Airflow (optional)
 
 ```bash
 docker compose up airflow-init
 docker compose up -d
-# Airflow UI → http://localhost:8080 (admin / admin)
+# Airflow UI → http://localhost:8080
 ```
 
-### 4. Add the Snowflake connection in Airflow
+---
 
-Admin → Connections → Add:
-- **Conn Id:** `snowflake_default`
-- **Conn Type:** Snowflake
-- **Schema:** HISTORICAL
-- **Login:** your Snowflake username
-- **Password:** your Snowflake password
-- **Extra:** `{"account": "xy12345.us-east-1", "warehouse": "COMPUTE_WH", "database": "BASEBALL", "role": "SYSADMIN"}`
+## Historical Backfill
 
-### 5. Run the tests
+To backfill Statcast data for 2015-2025, run on EC2 inside a tmux session:
 
 ```bash
-pip install pybaseball pandas pytest beautifulsoup4 curl_cffi pygithub
-pytest tests/ -v
+tmux new -s backfill
+python3.11 jobs/backfill_statcast.py
+# detach: Ctrl+B D
+# reattach: tmux attach -t backfill
 ```
 
-### 6. Backfill data
+Checkpoints every 50 players and after each year — safe to interrupt and resume.
 
-**Team batting logs:**
-Trigger `historical_team_batting_logs_backfill` from the Airflow UI with config:
-```json
-{
-  "teams": ["NYY", "BOS"],
-  "seasons": [2023, 2024]
-}
-```
+---
 
-**Team pitching logs:**
-Trigger `historical_team_pitching_logs_backfill` from the Airflow UI with config:
-```json
-{
-  "teams": ["NYY", "BOS"],
-  "seasons": [2023, 2024]
-}
-```
-
-**Retrosheet events:**
-Trigger `historical_retrosheet_events_backfill` from the Airflow UI with config:
-```json
-{
-  "seasons": [2020, 2021, 2022, 2023]
-}
-```
-
-The Retrosheet DAG fetches game event data from the [Chadwick Bureau's Retrosheet repository](https://github.com/chadwickbureau/retrosheet) via pybaseball. It includes:
-- Full game box scores for both teams
-- Starting lineups with player IDs, names, and defensive positions
-- Manager information
-- Game metadata (attendance, duration, park ID)
-- Pre-computed rolling window statistics (162/90/30 game rolling sums for batting average, OBP, SLG, OPS, stolen bases, caught stealing, and errors)
-
-## Key design decisions
-
-**Dynamic task mapping**  
-Uses Airflow 2.3+ dynamic task mapping to parallelize by team and season. Each team/season combination spawns its own task.
-
-**Separation of concerns**  
-Transforms live in `transform_utils.py`, not in the DAG. This makes them independently testable.
-
-**TaskFlow API**  
-Uses Airflow's modern `@task` decorator style rather than the older `PythonOperator`.
-
-**Retrosheet Data Attribution**  
-Retrosheet data is used under their [free use policy](https://www.retrosheet.org/#notice). The data is provided free of charge and copyrighted by Retrosheet. See `dags/utils/retrosheet.py` for the full notice.
-
-## Querying the data
+## Querying the Data
 
 ```sql
--- Team batting stats for a specific season
-SELECT Team, Season, SUM(R) as total_runs, SUM(HR) as total_hr
-FROM BASEBALL.HISTORICAL.TEAM_BATTING_LOGS
-WHERE Season = 2023
-GROUP BY Team, Season
-ORDER BY total_runs DESC;
+-- recent batter rolling features
+SELECT mlbam_id, game_date, barrel_162, ev_162, hr_per_pa_162
+FROM BASEBALL.STATCAST.BATTER_ROLLING_FEATURES
+WHERE game_date >= CURRENT_DATE - 7
+ORDER BY hr_per_pa_162 DESC
+LIMIT 20;
 
--- Team pitching ERA leaders
-SELECT Team, Season, ROUND(AVG(ERA), 2) as avg_era, SUM(SO) as total_so
-FROM BASEBALL.HISTORICAL.TEAM_PITCHING_LOGS
-WHERE Season = 2023
-GROUP BY Team, Season
-ORDER BY avg_era ASC;
+-- pitcher HR/BF over last 10 starts
+SELECT mlbam_id, game_date, hr_per_bf_10, fb_perc_10
+FROM BASEBALL.STATCAST.PITCHER_ROLLING_FEATURES
+WHERE game_date = CURRENT_DATE - 1
+ORDER BY hr_per_bf_10 DESC;
 
--- Retrosheet events: Games with high-scoring home teams (2023 season)
-SELECT DATE_DBLHEAD, TEAM_H, TEAM_V, RUNS_H, RUNS_V, DURATION
-FROM BASEBALL.HISTORICAL.RETROSHEET_EVENTS
-WHERE SEASON = 2023 AND RUNS_H >= 10
-ORDER BY RUNS_H DESC;
+-- recent game results
+SELECT team_h, team_v, runs_h, runs_v, home_victory
+FROM BASEBALL.STATCAST.GAME_RESULTS
+WHERE game_date >= CURRENT_DATE - 7
+ORDER BY game_date DESC;
 
--- Retrosheet rolling stats: Impact of team OBP on game outcome
+-- historical team OBP impact on win rate
 SELECT
-    CASE WHEN OBP_30_H >= 0.340 THEN 'Hot' ELSE 'Cold' END as home_team_obp_status,
+    CASE WHEN OBP_30_H >= 0.340 THEN 'Hot' ELSE 'Cold' END as home_obp_status,
     COUNT(*) as games,
-    SUM(HOME_VICTORY) as home_wins,
     ROUND(AVG(HOME_VICTORY) * 100, 1) as home_win_pct
 FROM BASEBALL.HISTORICAL.RETROSHEET_EVENTS
-WHERE SEASON = 2023
+WHERE SEASON >= 2015
 GROUP BY 1;
 ```
 
-## Extending this project
+---
 
-- Add dbt for data modeling
-- Add Airflow alerting (email/Slack on failure)
-- Add a Streamlit dashboard for visualization
+## Authentication
+
+Uses RSA key pair authentication for Snowflake — no MFA bypass required. Generate keys:
+
+```bash
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+```
+
+Assign public key to your Snowflake user:
+```sql
+ALTER USER your_username SET RSA_PUBLIC_KEY='<contents of rsa_key.pub>';
+```
+
+Store private key as `SNOWFLAKE_PRIVATE_KEY` GitHub secret.
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE)
+
+---
+
+*Part of the [MoneyballVo](https://x.com/MoneyballVo) MLB analytics project.*
