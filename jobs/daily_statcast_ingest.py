@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -20,8 +19,6 @@ log = logging.getLogger(__name__)
 if __name__ == "__main__":
     log.info("Starting daily MLB statcast pipeline")
 
-    game_date = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
-
     player_info = get_yesterdays_players()
 
     # log lineup confirmation status for today
@@ -30,6 +27,6 @@ if __name__ == "__main__":
     batter_rows = fetch_and_load_batter_stats(player_info)
     pitcher_rows = fetch_and_load_pitcher_stats(player_info)
     update_game_results()
-    compute_rolling_features(batter_rows, pitcher_rows, game_date)
+    compute_rolling_features(batter_rows, pitcher_rows, player_info["date"])
 
     log.info("Daily pipeline complete")
