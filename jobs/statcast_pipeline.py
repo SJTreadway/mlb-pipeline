@@ -139,6 +139,27 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     cursor.close()
 
 
+def _bulk_insert_snowflake(conn, df, table):
+    """Fast bulk insert for backfill — no delete, no conflict check."""
+    if df.empty:
+        return
+
+    cursor = conn.cursor()
+    cols = df.columns.tolist()
+    placeholders = ", ".join(["%s"] * len(cols))
+    col_str = ", ".join(cols)
+    sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
+
+    # batch insert all rows at once
+    data = [
+        tuple(None if (isinstance(v, float) and np.isnan(v)) else v for v in row)
+        for row in df.itertuples(index=False)
+    ]
+    cursor.executemany(sql, data)
+    conn.commit()
+    cursor.close()
+
+
 # ── Transform helpers ─────────────────────────────────────────────────────────
 
 

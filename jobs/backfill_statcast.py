@@ -17,6 +17,9 @@ import logging
 import pickle
 from datetime import datetime
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+
 import requests
 import pandas as pd
 import numpy as np
@@ -24,7 +27,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jobs.statcast_pipeline import (
     _get_snowflake_conn,
-    _upsert_to_snowflake,
+    _bulk_insert_snowflake,
     _transform_batter_game,
     _transform_pitcher_game,
     DATABASE,
@@ -48,9 +51,10 @@ START_YEAR = 2015
 END_YEAR = 2025
 MIN_PA = 50  # minimum plate appearances to qualify
 MIN_GS = 5  # minimum games started for pitchers
-API_SLEEP = 0.5  # seconds between API calls
+API_SLEEP = 0.2  # seconds between API calls
+MAX_WORKERS = 8
 
-CHECKPOINT_FILE = "backfill_checkpoint.json"
+CHECKPOINT_FILE = "backfill_checkpoint.json"M
 
 
 # ── Checkpoint ────────────────────────────────────────────────────────────────
@@ -69,6 +73,27 @@ def save_checkpoint(checkpoint):
 
 
 # ── Player lists ──────────────────────────────────────────────────────────────
+
+def _fetch_and_load_batter(args):
+    mlbam_id, year, completed = args
+    key = f'{mlbam_id}_{year}'
+    if key in completed:
+        return key, 0
+    try:
+        start = f'{year}-03-01'
+        end   = f'{year}-11-30'
+        df    = statcast_batter(start, end, int(mlbam_id))
+        if df is None or df.empty:
+            return key, 0
+        game_df = _transform_batter_game(df)
+        conn = _get_snowflake_conn()  # create per thread
+        if not game_df.empty:
+            _bulk_insert_snowflake(conn, game_df, 'RAW_BATTER_GAMES')
+        time.sleep(API_SLEEP)
+        return key, len(game_df) if not game_df.empty else 0
+    except Exception as e:
+        log.warning(f'Error fetching batter {mlbam_id} ({year}): {e}')
+        return key, 0
 
 
 def get_qualified_batters(year, min_pa=MIN_PA):
@@ -97,6 +122,30 @@ def get_qualified_batters(year, min_pa=MIN_PA):
     except Exception as e:
         log.error(f"Error fetching batters for {year}: {e}")
         return []
+      
+def _fetch_and_load_pitcher(args):
+    mlbam_id, year, completed = args
+    key = f'{mlbam_id}_{year}'
+    if key in completed:
+        return key, 0
+    try:
+        start = f'{year}-03-01'
+        end   = f'{year}-11-30'
+        df    = statcast_pitcher(start, end, int(mlbam_id))
+        if df is None or df.empty:
+            return key, 0
+        game_df = _transform_pitcher_game(df)
+        conn = _get_snowflake_conn()
+        try:
+            if not game_df.empty:
+                _bulk_insert_snowflake(conn, game_df, 'RAW_PITCHER_GAMES')
+        finally:
+            conn.close()
+        time.sleep(API_SLEEP)
+        return key, len(game_df) if not game_df.empty else 0
+    except Exception as e:
+        log.warning(f'Error fetching pitcher {mlbam_id} ({year}): {e}')
+        return key, 0
 
 
 def get_qualified_pitchers(year, min_gs=MIN_GS):
@@ -130,115 +179,67 @@ def get_qualified_pitchers(year, min_gs=MIN_GS):
 # ── Backfill functions ────────────────────────────────────────────────────────
 
 
-def backfill_batters(conn, checkpoint):
-    completed = set(checkpoint["completed_batters"])
+def backfill_batters(checkpoint):
+    completed  = set(checkpoint['completed_batters'])
     total_rows = 0
 
     for year in range(START_YEAR, END_YEAR + 1):
         batter_ids = get_qualified_batters(year)
-        remaining = [bid for bid in batter_ids if f"{bid}_{year}" not in completed]
-        log.info(
-            f"{year}: {len(remaining)} batters to backfill ({len(batter_ids) - len(remaining)} already done)"
-        )
+        remaining  = [bid for bid in batter_ids if f'{bid}_{year}' not in completed]
+        log.info(f'{year}: {len(remaining)} batters to backfill')
 
-        for i, mlbam_id in enumerate(remaining):
-            key = f"{mlbam_id}_{year}"
-            try:
-                start = f"{year}-03-01"
-                end = f"{year}-11-30"
-                df = statcast_batter(start, end, int(mlbam_id))
+        args = [(bid, year, completed) for bid in remaining]
 
-                if df is None or df.empty:
-                    completed.add(key)
-                    continue
-
-                game_df = _transform_batter_game(df)
-                if not game_df.empty:
-                    _upsert_to_snowflake(
-                        conn,
-                        game_df,
-                        "RAW_BATTER_GAMES",
-                        ["mlbam_id", "game_date", "game_pk"],
-                    )
-                    total_rows += len(game_df)
-
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(_fetch_and_load_batter, a): a for a in args}
+            for i, future in enumerate(tqdm(
+                as_completed(futures), total=len(futures), desc=f'{year} batters'
+            ), 1):
+                key, rows = future.result()
                 completed.add(key)
-                time.sleep(API_SLEEP)
+                total_rows += rows
 
-                # checkpoint every 50 players
-                if (i + 1) % 50 == 0:
-                    checkpoint["completed_batters"] = list(completed)
+                if i % 50 == 0:
+                    checkpoint['completed_batters'] = list(completed)
                     save_checkpoint(checkpoint)
-                    log.info(
-                        f"{year}: {i+1}/{len(remaining)} batters done — {total_rows} rows total"
-                    )
+                    log.info(f'{year}: {i}/{len(remaining)} done — {total_rows} rows total')
 
-            except Exception as e:
-                log.warning(f"Error fetching batter {mlbam_id} ({year}): {e}")
-                time.sleep(2)
-
-        # save checkpoint after each year
-        checkpoint["completed_batters"] = list(completed)
+        checkpoint['completed_batters'] = list(completed)
         save_checkpoint(checkpoint)
-        log.info(f"Year {year} batters complete — {total_rows} total rows so far")
+        log.info(f'Year {year} complete — {total_rows} total rows')
 
     return total_rows
 
-
-def backfill_pitchers(conn, checkpoint):
-    completed = set(checkpoint["completed_pitchers"])
+def backfill_pitchers(checkpoint):
+    completed  = set(checkpoint['completed_pitchers'])
     total_rows = 0
 
     for year in range(START_YEAR, END_YEAR + 1):
         pitcher_ids = get_qualified_pitchers(year)
-        remaining = [pid for pid in pitcher_ids if f"{pid}_{year}" not in completed]
-        log.info(
-            f"{year}: {len(remaining)} pitchers to backfill ({len(pitcher_ids) - len(remaining)} already done)"
-        )
+        remaining   = [pid for pid in pitcher_ids if f'{pid}_{year}' not in completed]
+        log.info(f'{year}: {len(remaining)} pitchers to backfill')
 
-        for i, mlbam_id in enumerate(remaining):
-            key = f"{mlbam_id}_{year}"
-            try:
-                start = f"{year}-03-01"
-                end = f"{year}-11-30"
-                df = statcast_pitcher(start, end, int(mlbam_id))
+        args = [(pid, year, completed) for pid in remaining]
 
-                if df is None or df.empty:
-                    completed.add(key)
-                    continue
-
-                game_df = _transform_pitcher_game(df)
-                if not game_df.empty:
-                    _upsert_to_snowflake(
-                        conn,
-                        game_df,
-                        "RAW_PITCHER_GAMES",
-                        ["mlbam_id", "game_date", "game_pk"],
-                    )
-                    total_rows += len(game_df)
-
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(_fetch_and_load_pitcher, a): a for a in args}
+            for i, future in enumerate(tqdm(
+                as_completed(futures), total=len(futures), desc=f'{year} pitchers'
+            ), 1):
+                key, rows = future.result()
                 completed.add(key)
-                time.sleep(API_SLEEP)
+                total_rows += rows
 
-                # checkpoint every 50 players
-                if (i + 1) % 50 == 0:
-                    checkpoint["completed_pitchers"] = list(completed)
+                if i % 50 == 0:
+                    checkpoint['completed_pitchers'] = list(completed)
                     save_checkpoint(checkpoint)
-                    log.info(
-                        f"{year}: {i+1}/{len(remaining)} pitchers done — {total_rows} rows total"
-                    )
+                    log.info(f'{year}: {i}/{len(remaining)} done — {total_rows} rows total')
 
-            except Exception as e:
-                log.warning(f"Error fetching pitcher {mlbam_id} ({year}): {e}")
-                time.sleep(2)
-
-        # save checkpoint after each year
-        checkpoint["completed_pitchers"] = list(completed)
+        checkpoint['completed_pitchers'] = list(completed)
         save_checkpoint(checkpoint)
-        log.info(f"Year {year} pitchers complete — {total_rows} total rows so far")
+        log.info(f'Year {year} complete — {total_rows} total rows')
 
     return total_rows
-
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -248,11 +249,11 @@ if __name__ == "__main__":
     conn = _get_snowflake_conn()
 
     log.info("--- Backfilling batters ---")
-    batter_rows = backfill_batters(conn, checkpoint)
+    batter_rows = backfill_batters(checkpoint)
     log.info(f"Batter backfill complete — {batter_rows} total rows")
 
     log.info("--- Backfilling pitchers ---")
-    pitcher_rows = backfill_pitchers(conn, checkpoint)
+    pitcher_rows = backfill_pitchers(checkpoint)
     log.info(f"Pitcher backfill complete — {pitcher_rows} total rows")
 
     conn.close()
