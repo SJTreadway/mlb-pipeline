@@ -480,20 +480,40 @@ def update_game_results() -> int:
     return len(rows)
 
 
-def compute_rolling_features(batter_rows: int, pitcher_rows: int) -> str:
+def compute_rolling_features(
+    batter_rows: int, pitcher_rows: int, game_date: str
+) -> str:
     """Recompute rolling features from raw tables → feature tables."""
     conn = _get_snowflake_conn()
     cursor = conn.cursor()
 
+    # only pull players who had games yesterday
     cursor.execute(
-        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES ORDER BY mlbam_id, game_date"
+        f"""
+        SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES 
+        WHERE mlbam_id IN (
+            SELECT DISTINCT mlbam_id 
+            FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES 
+            WHERE game_date = '{game_date}'
+        )
+        ORDER BY mlbam_id, game_date
+    """
     )
+
     batter_df = pd.DataFrame(
         cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
     )
 
     cursor.execute(
-        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES ORDER BY mlbam_id, game_date"
+        f"""
+        SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES 
+        WHERE mlbam_id IN (
+            SELECT DISTINCT mlbam_id 
+            FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES 
+            WHERE game_date = '{game_date}'
+        )
+        ORDER BY mlbam_id, game_date
+    """
     )
     pitcher_df = pd.DataFrame(
         cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
