@@ -538,7 +538,7 @@ def update_game_results() -> int:
 
 
 def compute_rolling_features(
-    batter_rows: int, pitcher_rows: int, game_date: str = None
+    batter_rows: int, pitcher_rows: int, game_date: str = None, year: int = None
 ) -> str:
     """Recompute rolling features from raw tables → feature tables.
 
@@ -548,55 +548,32 @@ def compute_rolling_features(
     conn = _get_snowflake_conn()
     cursor = conn.cursor()
 
-    # ── pull batter data ──────────────────────────────────────────────────────
+    # ── build WHERE clause ────────────────────────────────────────────────────
     if game_date:
-        log.info(f"Incremental batter features for {game_date}")
-        cursor.execute(
-            f"""
-            SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES
-            WHERE mlbam_id IN (
-                SELECT DISTINCT mlbam_id
-                FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES
-                WHERE game_date = '{game_date}'
-            )
-            ORDER BY mlbam_id, game_date
-        """
+        batter_where = f"WHERE mlbam_id IN (SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES WHERE game_date = '{game_date}') ORDER BY mlbam_id, game_date"
+        pitcher_where = f"WHERE mlbam_id IN (SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES WHERE game_date = '{game_date}') ORDER BY mlbam_id, game_date"
+        insert_fn = lambda conn, df, table: _upsert_to_snowflake(
+            conn, df, table, ["mlbam_id", "game_date", "game_pk"]
         )
+    elif year:
+        batter_where = f"WHERE YEAR(game_date) = {year} ORDER BY mlbam_id, game_date"
+        pitcher_where = f"WHERE YEAR(game_date) = {year} ORDER BY mlbam_id, game_date"
+        insert_fn = lambda conn, df, table: _bulk_insert_snowflake(conn, df, table)
     else:
-        log.info("Full batter features recompute")
-        cursor.execute(
-            f"""
-            SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES
-            ORDER BY mlbam_id, game_date
-        """
-        )
+        batter_where = "ORDER BY mlbam_id, game_date"
+        pitcher_where = "ORDER BY mlbam_id, game_date"
+        insert_fn = lambda conn, df, table: _truncate_and_bulk_insert(conn, df, table)
+
+    # ── pull data ─────────────────────────────────────────────────────────────
+    cursor.execute(f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES {batter_where}")
     batter_df = pd.DataFrame(
         cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
     )
     log.info(f"Pulled {len(batter_df)} batter rows")
 
-    # ── pull pitcher data ─────────────────────────────────────────────────────
-    if game_date:
-        log.info(f"Incremental pitcher features for {game_date}")
-        cursor.execute(
-            f"""
-            SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES
-            WHERE mlbam_id IN (
-                SELECT DISTINCT mlbam_id
-                FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES
-                WHERE game_date = '{game_date}'
-            )
-            ORDER BY mlbam_id, game_date
-        """
-        )
-    else:
-        log.info("Full pitcher features recompute")
-        cursor.execute(
-            f"""
-            SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES
-            ORDER BY mlbam_id, game_date
-        """
-        )
+    cursor.execute(
+        f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES {pitcher_where}"
+    )
     pitcher_df = pd.DataFrame(
         cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
     )
@@ -687,15 +664,8 @@ def compute_rolling_features(
     if batter_feat_rows:
         batter_features = pd.concat(batter_feat_rows, ignore_index=True)
         log.info(f"Computed batter features: {len(batter_features)} rows")
-        if game_date:
-            _upsert_to_snowflake(
-                conn,
-                batter_features,
-                "BATTER_ROLLING_FEATURES",
-                ["mlbam_id", "game_date", "game_pk"],
-            )
-        else:
-            _truncate_and_bulk_insert(conn, batter_features, "BATTER_ROLLING_FEATURES")
+        insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
+        del batter_features, batter_feat_rows
 
     # ── pitcher rolling features ──────────────────────────────────────────────
     pitcher_feat_rows = []
@@ -736,20 +706,11 @@ def compute_rolling_features(
     if pitcher_feat_rows:
         pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
-        if game_date:
-            _upsert_to_snowflake(
-                conn,
-                pitcher_features,
-                "PITCHER_ROLLING_FEATURES",
-                ["mlbam_id", "game_date", "game_pk"],
-            )
-        else:
-            _truncate_and_bulk_insert(
-                conn, pitcher_features, "PITCHER_ROLLING_FEATURES"
-            )
+        insert_fn(conn, pitcher_features, "PITCHER_ROLLING_FEATURES")
+        del pitcher_features, pitcher_feat_rows
 
     conn.close()
-    log.info("Rolling features computed and loaded")
+    log.info("Rolling features complete")
     return "success"
 
 

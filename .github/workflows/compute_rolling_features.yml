@@ -14,7 +14,7 @@ jobs:
         run: python3.11 -m pip install -r requirements.txt
 
       - name: Compute rolling features
-        run: python3.11 jobs/compute_features.py
+        run: python3.11 jobs/compute_rolling_features.py
         env:
           SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}

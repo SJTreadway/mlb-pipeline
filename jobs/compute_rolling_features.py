@@ -10,6 +10,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    log.info("Starting rolling features computation")
-    compute_rolling_features(0, 0)
-    log.info("Rolling features computation complete")
+    for year in range(2015, 2027):
+        log.info(f"Processing year {year}")
+        compute_rolling_features(0, 0, year=year)
+    log.info("All years complete")
