@@ -1,0 +1,24 @@
+name: Compute Rolling Features
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compute_features:
+    runs-on: self-hosted
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: python3.11 -m pip install -r requirements.txt
+
+      - name: Compute rolling features
+        run: python3.11 jobs/compute_features.py
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_DATABASE:     ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_WAREHOUSE:    ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_ROLE:         ${{ secrets.SNOWFLAKE_ROLE }}

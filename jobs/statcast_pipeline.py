@@ -160,6 +160,42 @@ def _bulk_insert_snowflake(conn, df, table):
     cursor.close()
 
 
+def _truncate_and_bulk_insert(conn, df, table):
+    """Truncate table and bulk insert all rows — for full recompute only."""
+    if df.empty:
+        return
+
+    # add missing columns first
+    _add_missing_columns(conn, df, table)
+
+    # only keep columns that exist in table
+    table_cols = _get_table_columns(conn, table)
+    df = df[[c for c in df.columns if c.lower() in table_cols]]
+    if df.empty:
+        return
+
+    cursor = conn.cursor()
+
+    # truncate first
+    cursor.execute(f"TRUNCATE TABLE {DATABASE}.{SCHEMA}.{table}")
+    log.info(f"Truncated {table}")
+
+    cols = df.columns.tolist()
+    placeholders = ", ".join(["%s"] * len(cols))
+    col_str = ", ".join(cols)
+    sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
+
+    data = [
+        tuple(None if (isinstance(v, float) and np.isnan(v)) else v for v in row)
+        for row in df.itertuples(index=False)
+    ]
+
+    cursor.executemany(sql, data)
+    conn.commit()
+    cursor.close()
+    log.info(f"Inserted {len(df)} rows to {table}")
+
+
 # ── Transform helpers ─────────────────────────────────────────────────────────
 
 
@@ -630,12 +666,7 @@ def compute_rolling_features(
                 if isinstance(c, str) and str(c).lower() != "nan" and pd.notna(c)
             ]
         ]
-        _upsert_to_snowflake(
-            conn,
-            batter_features,
-            "BATTER_ROLLING_FEATURES",
-            ["mlbam_id", "game_date", "game_pk"],
-        )
+        _truncate_and_bulk_insert(conn, batter_features, "BATTER_ROLLING_FEATURES")
 
     # ── pitcher rolling features ──────────────────────────────────────────────
     pitcher_feat_rows = []
@@ -682,11 +713,10 @@ def compute_rolling_features(
                 if isinstance(c, str) and str(c).lower() != "nan" and pd.notna(c)
             ]
         ]
-        _upsert_to_snowflake(
+        _truncate_and_bulk_insert(
             conn,
             pitcher_features,
             "PITCHER_ROLLING_FEATURES",
-            ["mlbam_id", "game_date", "game_pk"],
         )
 
     conn.close()
