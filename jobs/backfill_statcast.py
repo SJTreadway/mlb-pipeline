@@ -265,9 +265,11 @@ if __name__ == "__main__":
     checkpoint = load_checkpoint()
     conn = _get_snowflake_conn()
 
+    """
     log.info("--- Backfilling batters ---")
     batter_rows = backfill_batters(checkpoint)
     log.info(f"Batter backfill complete — {batter_rows} total rows")
+    """
 
     log.info("--- Backfilling pitchers ---")
     pitcher_rows = backfill_pitchers(checkpoint)
