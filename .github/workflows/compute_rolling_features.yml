@@ -2,6 +2,19 @@ name: Compute Rolling Features
 
 on:
   workflow_dispatch:
+    inputs:
+      start_year:
+        description: 'Start year'
+        required: false
+        default: '2015'
+      end_year:
+        description: 'End year'
+        required: false
+        default: '2026'
+      pitcher_only:
+        description: 'Pitcher only (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
   compute_features:
@@ -16,9 +29,12 @@ jobs:
       - name: Compute rolling features
         run: python3.11 jobs/compute_rolling_features.py
         env:
-          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
-          SNOWFLAKE_DATABASE:     ${{ secrets.SNOWFLAKE_DATABASE }}
-          SNOWFLAKE_WAREHOUSE:    ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-          SNOWFLAKE_ROLE:         ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_ACCOUNT:     ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:        ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_DATABASE:    ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_WAREHOUSE:   ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_ROLE:        ${{ secrets.SNOWFLAKE_ROLE }}
+          START_YEAR:            ${{ github.event.inputs.start_year }}
+          END_YEAR:              ${{ github.event.inputs.end_year }}
+          PITCHER_ONLY:          ${{ github.event.inputs.pitcher_only }}

@@ -549,7 +549,11 @@ def update_game_results() -> int:
 
 
 def compute_rolling_features(
-    batter_rows: int, pitcher_rows: int, game_date: str = None, year: int = None
+    batter_rows: int,
+    pitcher_rows: int,
+    game_date: str = None,
+    year: int = None,
+    pitcher_only: bool = False,
 ) -> str:
     """Recompute rolling features from raw tables → feature tables.
 
@@ -576,11 +580,14 @@ def compute_rolling_features(
         insert_fn = lambda conn, df, table: _truncate_and_bulk_insert(conn, df, table)
 
     # ── pull data ─────────────────────────────────────────────────────────────
-    cursor.execute(f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES {batter_where}")
-    batter_df = pd.DataFrame(
-        cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
-    )
-    log.info(f"Pulled {len(batter_df)} batter rows")
+    if not pitcher_only:
+        cursor.execute(
+            f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES {batter_where}"
+        )
+        batter_df = pd.DataFrame(
+            cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
+        )
+        log.info(f"Pulled {len(batter_df)} batter rows")
 
     cursor.execute(
         f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES {pitcher_where}"
@@ -591,93 +598,94 @@ def compute_rolling_features(
     log.info(f"Pulled {len(pitcher_df)} pitcher rows")
     cursor.close()
 
-    # ── batter rolling features ───────────────────────────────────────────────
-    batter_feat_rows = []
-    bat_stat_cols = [
-        "hr",
-        "ab",
-        "bb",
-        "h",
-        "hbp",
-        "sf",
-        "x2b",
-        "x3b",
-        "hr_vs_r",
-        "ab_vs_r",
-        "hr_vs_l",
-        "ab_vs_l",
-        "barrels",
-        "ev_sum",
-        "hard_hits",
-        "sweet_spots",
-        "batted_balls",
-        "est_woba",
-        "est_slg",
-    ]
+    if not pitcher_only:
+        # ── batter rolling features ───────────────────────────────────────────────
+        batter_feat_rows = []
+        bat_stat_cols = [
+            "hr",
+            "ab",
+            "bb",
+            "h",
+            "hbp",
+            "sf",
+            "x2b",
+            "x3b",
+            "hr_vs_r",
+            "ab_vs_r",
+            "hr_vs_l",
+            "ab_vs_l",
+            "barrels",
+            "ev_sum",
+            "hard_hits",
+            "sweet_spots",
+            "batted_balls",
+            "est_woba",
+            "est_slg",
+        ]
 
-    for mlbam_id, df in batter_df.groupby("mlbam_id"):
-        df = df.sort_values("game_date").reset_index(drop=True)
-        new_cols = {}
+        for mlbam_id, df in batter_df.groupby("mlbam_id"):
+            df = df.sort_values("game_date").reset_index(drop=True)
+            new_cols = {}
 
-        for w in WINDOWS_BAT:
-            for col in bat_stat_cols:
-                if col in df.columns:
-                    new_cols[f"rollsum_{col}_{w}"] = _rolling_sum(df, col, w).values
+            for w in WINDOWS_BAT:
+                for col in bat_stat_cols:
+                    if col in df.columns:
+                        new_cols[f"rollsum_{col}_{w}"] = _rolling_sum(df, col, w).values
 
-        new_df = pd.DataFrame(new_cols, index=df.index)
-        df = pd.concat([df, new_df], axis=1)
+            new_df = pd.DataFrame(new_cols, index=df.index)
+            df = pd.concat([df, new_df], axis=1)
 
-        for w in WINDOWS_BAT:
+            for w in WINDOWS_BAT:
 
-            def g(col, _w=w):
-                return pd.Series(
-                    new_cols.get(f"rollsum_{col}_{_w}", np.zeros(len(df))),
-                    index=df.index,
-                )
+                def g(col, _w=w):
+                    return pd.Series(
+                        new_cols.get(f"rollsum_{col}_{_w}", np.zeros(len(df))),
+                        index=df.index,
+                    )
 
-            ab = g("ab")
-            hr = g("hr")
-            h = g("h")
-            bb = g("bb")
-            hbp = g("hbp")
-            sf = g("sf")
-            x2b = g("x2b")
-            x3b = g("x3b")
-            bbd = g("batted_balls")
-            evs = g("ev_sum")
-            hh = g("hard_hits")
-            ss = g("sweet_spots")
-            bar = g("barrels")
-            hr_r = g("hr_vs_r")
-            ab_r = g("ab_vs_r")
-            hr_l = g("hr_vs_l")
-            ab_l = g("ab_vs_l")
+                ab = g("ab")
+                hr = g("hr")
+                h = g("h")
+                bb = g("bb")
+                hbp = g("hbp")
+                sf = g("sf")
+                x2b = g("x2b")
+                x3b = g("x3b")
+                bbd = g("batted_balls")
+                evs = g("ev_sum")
+                hh = g("hard_hits")
+                ss = g("sweet_spots")
+                bar = g("barrels")
+                hr_r = g("hr_vs_r")
+                ab_r = g("ab_vs_r")
+                hr_l = g("hr_vs_l")
+                ab_l = g("ab_vs_l")
 
-            ab_denom = ab.replace(0, np.nan)
-            pa_denom = (ab + bb + hbp + sf).replace(0, np.nan)
-            batted_denom = bbd.replace(0, np.nan)
+                ab_denom = ab.replace(0, np.nan)
+                pa_denom = (ab + bb + hbp + sf).replace(0, np.nan)
+                batted_denom = bbd.replace(0, np.nan)
 
-            df[f"hr_per_pa_{w}"] = hr / pa_denom
-            df[f"slg_{w}"] = (h + x2b + 2 * x3b + 3 * hr) / ab_denom
-            df[f"obp_{w}"] = (h + bb + hbp) / pa_denom
-            df[f"obs_{w}"] = df[f"slg_{w}"] + df[f"obp_{w}"]
-            df[f"ev_{w}"] = evs / batted_denom
-            df[f"hardhit_{w}"] = hh / batted_denom
-            df[f"swspot_{w}"] = ss / batted_denom
-            df[f"barrel_{w}"] = bar / batted_denom
-            df[f"hr_per_pa_vs_r_{w}"] = hr_r / ab_r.replace(0, np.nan)
-            df[f"hr_per_pa_vs_l_{w}"] = hr_l / ab_l.replace(0, np.nan)
-            df[f"est_woba_{w}"] = g("est_woba") / batted_denom
-            df[f"est_slg_{w}"] = g("est_slg") / batted_denom
+                df[f"hr_per_pa_{w}"] = hr / pa_denom
+                df[f"slg_{w}"] = (h + x2b + 2 * x3b + 3 * hr) / ab_denom
+                df[f"obp_{w}"] = (h + bb + hbp) / pa_denom
+                df[f"obs_{w}"] = df[f"slg_{w}"] + df[f"obp_{w}"]
+                df[f"ev_{w}"] = evs / batted_denom
+                df[f"hardhit_{w}"] = hh / batted_denom
+                df[f"swspot_{w}"] = ss / batted_denom
+                df[f"barrel_{w}"] = bar / batted_denom
+                df[f"hr_per_pa_vs_r_{w}"] = hr_r / ab_r.replace(0, np.nan)
+                df[f"hr_per_pa_vs_l_{w}"] = hr_l / ab_l.replace(0, np.nan)
+                df[f"est_woba_{w}"] = g("est_woba") / batted_denom
+                df[f"est_slg_{w}"] = g("est_slg") / batted_denom
 
-        batter_feat_rows.append(df)
+            batter_feat_rows.append(df)
 
-    if batter_feat_rows:
-        batter_features = pd.concat(batter_feat_rows, ignore_index=True)
-        log.info(f"Computed batter features: {len(batter_features)} rows")
-        insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
-        log.info(f"{year}: inserted {len(batter_features)} batter feature rows")
-        del batter_features, batter_feat_rows
+        if batter_feat_rows:
+            batter_features = pd.concat(batter_feat_rows, ignore_index=True)
+            log.info(f"Computed batter features: {len(batter_features)} rows")
+            insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
+            log.info(f"{year}: inserted {len(batter_features)} batter feature rows")
+            del batter_features, batter_feat_rows
 
     # ── pitcher rolling features ──────────────────────────────────────────────
     pitcher_feat_rows = []
