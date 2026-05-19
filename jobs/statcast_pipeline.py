@@ -140,7 +140,12 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
 
 
 def _bulk_insert_snowflake(conn, df, table):
-    """Fast bulk insert for backfill — no delete, no conflict check."""
+    if df.empty:
+        return
+
+    _add_missing_columns(conn, df, table)
+    table_cols = _get_table_columns(conn, table)
+    df = df[[c for c in df.columns if c.lower() in table_cols]]
     if df.empty:
         return
 
@@ -150,14 +155,20 @@ def _bulk_insert_snowflake(conn, df, table):
     col_str = ", ".join(cols)
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
 
-    # batch insert all rows at once
     data = [
         tuple(None if (isinstance(v, float) and np.isnan(v)) else v for v in row)
         for row in df.itertuples(index=False)
     ]
-    cursor.executemany(sql, data)
-    conn.commit()
+
+    # batch insert in chunks of 1000
+    chunk_size = 1000
+    for i in range(0, len(data), chunk_size):
+        chunk = data[i : i + chunk_size]
+        cursor.executemany(sql, chunk)
+        conn.commit()
+
     cursor.close()
+    log.info(f"Inserted {len(df)} rows to {table}")
 
 
 def _truncate_and_bulk_insert(conn, df, table):
@@ -665,6 +676,7 @@ def compute_rolling_features(
         batter_features = pd.concat(batter_feat_rows, ignore_index=True)
         log.info(f"Computed batter features: {len(batter_features)} rows")
         insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
+        log.info(f"{year}: inserted {len(batter_features)} batter feature rows")
         del batter_features, batter_feat_rows
 
     # ── pitcher rolling features ──────────────────────────────────────────────
@@ -707,6 +719,7 @@ def compute_rolling_features(
         pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
         insert_fn(conn, pitcher_features, "PITCHER_ROLLING_FEATURES")
+        log.info(f"{year}: inserted {len(pitcher_features)} pitcher feature rows")
         del pitcher_features, pitcher_feat_rows
 
     conn.close()
