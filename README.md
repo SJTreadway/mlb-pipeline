@@ -68,7 +68,7 @@ mlb-pipeline/
 ├── jobs/
 │   ├── statcast_pipeline.py        # Core ingestion logic (no Airflow dependency)
 │   ├── daily_statcast_ingest.py    # GitHub Actions entry point
-│   ├── backfill_statcast.py        # Historical backfill (2015-2025)
+│   ├── backfill_statcast.py        # Historical backfill (2015-2026)
 │   └── retrain_models.py           # Weekly model retraining
 ├── logs/                           # Airflow scheduler & DAG processor logs
 ├── plugins/                        # Airflow plugins (empty)
@@ -193,7 +193,7 @@ docker compose up -d
 
 ## Historical Backfill
 
-To backfill Statcast data for 2015-2025, run on EC2 inside a tmux session:
+To backfill Statcast data for 2015-2026, run on EC2 inside a tmux session:
 
 ```bash
 tmux new -s backfill

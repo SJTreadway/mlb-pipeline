@@ -1,5 +1,5 @@
 """
-Backfill historical Statcast data (2015-2025) into Snowflake.
+Backfill historical Statcast data (2015-2026) into Snowflake.
 
 Run on EC2 inside a tmux session:
     tmux new -s backfill
@@ -14,15 +14,12 @@ import sys
 import time
 import json
 import logging
-import pickle
-from datetime import datetime
+from datetime import date
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 import requests
-import pandas as pd
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jobs.statcast_pipeline import (
@@ -48,7 +45,7 @@ log = logging.getLogger(__name__)
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
 START_YEAR = int(os.environ.get("START_YEAR", 2015))
-END_YEAR = int(os.environ.get("END_YEAR", 2025))
+END_YEAR = int(os.environ.get("END_YEAR", 2026))
 MIN_PA = 50  # minimum plate appearances to qualify
 MIN_GS = 5  # minimum games started for pitchers
 API_SLEEP = 0.2  # seconds between API calls
@@ -82,7 +79,11 @@ def _fetch_and_load_batter(args):
         return key, 0
     try:
         start = f"{year}-03-01"
-        end = f"{year}-11-30"
+        end = (
+            f"{year}-11-30"
+            if year < date.today().year
+            else date.today().strftime("%Y-%m-%d")
+        )
         df = statcast_batter(start, end, int(mlbam_id))
         if df is None or df.empty:
             return key, 0
@@ -132,7 +133,11 @@ def _fetch_and_load_pitcher(args):
         return key, 0
     try:
         start = f"{year}-03-01"
-        end = f"{year}-11-30"
+        end = (
+            f"{year}-11-30"
+            if year < date.today().year
+            else date.today().strftime("%Y-%m-%d")
+        )
         df = statcast_pitcher(start, end, int(mlbam_id))
         if df is None or df.empty:
             return key, 0
