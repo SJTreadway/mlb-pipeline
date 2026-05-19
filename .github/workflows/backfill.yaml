@@ -1,0 +1,36 @@
+# .github/workflows/backfill.yml
+name: Backfill Statcast
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_year:
+        description: 'Start year'
+        required: false
+        default: '2015'
+      end_year:
+        description: 'End year'
+        required: false
+        default: '2025'
+
+jobs:
+  backfill:
+    runs-on: self-hosted
+    timeout-minutes: 360  # 6 hours max
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: python3.11 -m pip install -r requirements.txt
+
+      - name: Run backfill
+        run: python3.11 jobs/backfill_statcast.py
+        env:
+          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_DATABASE:     ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_WAREHOUSE:    ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_ROLE:         ${{ secrets.SNOWFLAKE_ROLE }}
+          START_YEAR:             ${{ github.event.inputs.start_year }}
+          END_YEAR:               ${{ github.event.inputs.end_year }}
