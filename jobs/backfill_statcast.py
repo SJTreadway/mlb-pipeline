@@ -52,7 +52,7 @@ END_YEAR = int(os.environ.get("END_YEAR", 2025))
 MIN_PA = 50  # minimum plate appearances to qualify
 MIN_GS = 5  # minimum games started for pitchers
 API_SLEEP = 0.2  # seconds between API calls
-MAX_WORKERS = 3
+MAX_WORKERS = 8
 
 CHECKPOINT_FILE = "backfill_checkpoint.json"
 
