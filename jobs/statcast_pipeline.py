@@ -776,7 +776,7 @@ def get_todays_lineup_players() -> dict:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     resp = requests.get(
         f"{MLB_API}/schedule",
-        params={"sportId": 1, "date": today, "hydrate": "lineups"},
+        params={"sportId": 1, "date": today, "hydrate": "lineups,probablePitcher"},
         timeout=15,
     )
     resp.raise_for_status()
@@ -784,6 +784,7 @@ def get_todays_lineup_players() -> dict:
     batter_ids = set()
     pitcher_ids = set()
     for game in games:
+        # confirmed lineup batters
         lineups = game.get("lineups", {})
         for side in ["homePlayers", "awayPlayers"]:
             for player in lineups.get(side, []):
@@ -795,6 +796,12 @@ def get_todays_lineup_players() -> dict:
                     pitcher_ids.add(pid)
                 else:
                     batter_ids.add(pid)
+        # probable starters
+        for side in ["home", "away"]:
+            pitcher = game.get("teams", {}).get(side, {}).get("probablePitcher", {})
+            pid = pitcher.get("id")
+            if pid:
+                pitcher_ids.add(pid)
     log.info(
         f"Today's confirmed lineup players: {len(batter_ids)} batters, {len(pitcher_ids)} pitchers"
     )
