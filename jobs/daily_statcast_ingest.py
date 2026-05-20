@@ -10,7 +10,6 @@ from jobs.statcast_pipeline import (
     fetch_and_load_pitcher_stats,
     update_game_results,
     compute_rolling_features,
-    check_todays_lineups,
 )
 
 logging.basicConfig(level=logging.INFO)
