@@ -133,11 +133,13 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
         delete_data = [tuple(row) for row in unique_vals.itertuples(index=False)]
         cursor.executemany(delete_sql, delete_data)
 
-    # bulk insert with executemany
+    # bulk insert with executemany in chunks
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
-    cursor.executemany(sql, data)
-
+    chunk_size = 1000
+    for i in range(0, len(data), chunk_size):
+        cursor.executemany(sql, data[i : i + chunk_size])
+        log.info(f"Inserted chunk {i//chunk_size + 1}/{(len(data)-1)//chunk_size + 1}")
     conn.commit()
     cursor.close()
 
