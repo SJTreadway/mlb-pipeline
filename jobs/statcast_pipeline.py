@@ -758,8 +758,8 @@ def compute_rolling_features(
     return "success"
 
 
-def check_todays_lineups():
-    """Log how many of today's games have confirmed lineups."""
+def get_todays_lineup_players() -> dict:
+    """Get batter and pitcher IDs from today's confirmed lineups."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     resp = requests.get(
         f"{MLB_API}/schedule",
@@ -768,7 +768,24 @@ def check_todays_lineups():
     )
     resp.raise_for_status()
     games = resp.json().get("dates", [{}])[0].get("games", [])
-    total = len(games)
-    confirmed = sum(1 for g in games if g.get("lineups", {}).get("homePlayers"))
-    log.info(f"Todays lineups: {confirmed}/{total} confirmed")
-    return confirmed, total
+    batter_ids = set()
+    pitcher_ids = set()
+    for game in games:
+        lineups = game.get("lineups", {})
+        for side in ["homePlayers", "awayPlayers"]:
+            for player in lineups.get(side, []):
+                pid = player.get("id")
+                pos = player.get("primaryPosition", {}).get("abbreviation", "")
+                if not pid:
+                    continue
+                if pos == "P":
+                    pitcher_ids.add(pid)
+                else:
+                    batter_ids.add(pid)
+    log.info(
+        f"Today's confirmed lineup players: {len(batter_ids)} batters, {len(pitcher_ids)} pitchers"
+    )
+    return {
+        "batter_ids": list(batter_ids),
+        "pitcher_ids": list(pitcher_ids),
+    }
