@@ -565,11 +565,19 @@ def compute_rolling_features(
 
     # ── build WHERE clause ────────────────────────────────────────────────────
     if game_date:
-        batter_where = f"WHERE mlbam_id IN (SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES WHERE game_date = '{game_date}') ORDER BY mlbam_id, game_date"
-        pitcher_where = f"WHERE mlbam_id IN (SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES WHERE game_date = '{game_date}') ORDER BY mlbam_id, game_date"
-        insert_fn = lambda conn, df, table: _upsert_to_snowflake(
-            conn, df, table, ["mlbam_id", "game_date", "game_pk"]
-        )
+        batter_where = f"""WHERE mlbam_id IN (
+          SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES 
+          WHERE game_date = '{game_date}'
+      ) 
+      AND game_date >= DATEADD(day, -365, '{game_date}')
+      ORDER BY mlbam_id, game_date"""
+
+        pitcher_where = f"""WHERE mlbam_id IN (
+          SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES 
+          WHERE game_date = '{game_date}'
+      ) 
+      AND game_date >= DATEADD(day, -365, '{game_date}')
+      ORDER BY mlbam_id, game_date"""
     elif year:
         batter_where = f"WHERE YEAR(game_date) = {year} ORDER BY mlbam_id, game_date"
         pitcher_where = f"WHERE YEAR(game_date) = {year} ORDER BY mlbam_id, game_date"
