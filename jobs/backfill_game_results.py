@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 DATABASE = os.environ.get("SNOWFLAKE_DATABASE", "BASEBALL")
 SCHEMA = "STATCAST"
 START_YEAR = int(os.environ.get("START_YEAR", 2015))
-END_YEAR = int(os.environ.get("END_YEAR", 2025))
+END_YEAR = int(os.environ.get("END_YEAR", 2026))
 
 
 def fetch_game_results_for_date(game_date: str) -> list:

@@ -10,7 +10,7 @@ on:
       end_year:
         description: 'End year'
         required: false
-        default: '2025'
+        default: '2026'
 
 jobs:
   backfill:
