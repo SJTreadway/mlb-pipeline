@@ -102,7 +102,10 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
         log.info(f"No rows to upsert to {table}")
         return
     df = df.copy()
-    df = df.where(pd.notnull(df), None)  # replace NaN with None
+    df = df.replace(
+        {np.nan: None, float("nan"): None, "nan": None, "NaN": None, "NAN": None}
+    )
+    df = df.where(pd.notnull(df), None)
     _add_missing_columns(conn, df, table)
     table_cols = _get_table_columns(conn, table)
     df = df[[c for c in df.columns if c.lower() in table_cols]]
