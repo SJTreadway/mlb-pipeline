@@ -101,17 +101,12 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     if df.empty:
         log.info(f"No rows to upsert to {table}")
         return
-
     df = df.copy()
     for col in df.columns:
         df[col] = df[col].apply(
             lambda x: None if (isinstance(x, float) and np.isnan(x)) else x
         )
-
-    # add missing columns first
     _add_missing_columns(conn, df, table)
-
-    # only keep columns that exist in table
     table_cols = _get_table_columns(conn, table)
     df = df[[c for c in df.columns if c.lower() in table_cols]]
     if df.empty:
@@ -124,16 +119,24 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     col_str = ", ".join(cols)
     where = " AND ".join([f"{c} = %s" for c in unique_cols])
 
-    # delete existing rows
-    for _, row in df.iterrows():
-        vals = tuple(row[c] for c in unique_cols)
-        cursor.execute(f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}", vals)
+    # single bulk DELETE using IN clause
+    unique_vals = df[unique_cols].drop_duplicates()
+    if len(unique_cols) == 1:
+        ids = tuple(unique_vals[unique_cols[0]].tolist())
+        cursor.execute(
+            f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {unique_cols[0]} IN ({','.join(['%s']*len(ids))})",
+            ids,
+        )
+    else:
+        # batch delete with executemany
+        delete_sql = f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}"
+        delete_data = [tuple(row) for row in unique_vals.itertuples(index=False)]
+        cursor.executemany(delete_sql, delete_data)
 
-    # bulk insert
+    # bulk insert with executemany
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
-    for row in data:
-        cursor.execute(sql, row)
+    cursor.executemany(sql, data)
 
     conn.commit()
     cursor.close()
