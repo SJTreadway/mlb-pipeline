@@ -556,14 +556,15 @@ def update_game_results() -> int:
 
 
 def compute_rolling_features(
-    batter_rows: int,
-    pitcher_rows: int,
+    batter_ids: list,
+    pitcher_ids: list,
     game_date: str = None,
     year: int = None,
     pitcher_only: bool = False,
 ) -> str:
     """Recompute rolling features from raw tables → feature tables.
 
+    If batter_ids/pitcher_ids provided, only recomputes for those players (incremental).
     If game_date is provided, only recomputes for players who played on that date (incremental).
     If game_date is None, recomputes all players (full recompute).
     """
@@ -571,14 +572,26 @@ def compute_rolling_features(
     cursor = conn.cursor()
 
     # ── build WHERE clause ────────────────────────────────────────────────────
-    if game_date:
+    if batter_ids and pitcher_ids:
+        # today's lineup players — only their last 365 days
+        b_ids = ",".join(str(i) for i in batter_ids)
+        p_ids = ",".join(str(i) for i in pitcher_ids)
+        batter_where = f"""WHERE mlbam_id IN ({b_ids})
+            AND game_date >= DATEADD(day, -365, '{game_date}')
+            ORDER BY mlbam_id, game_date"""
+        pitcher_where = f"""WHERE mlbam_id IN ({p_ids})
+            AND game_date >= DATEADD(day, -365, '{game_date}')
+            ORDER BY mlbam_id, game_date"""
+        insert_fn = lambda conn, df, table: _upsert_to_snowflake(
+            conn, df, table, ["mlbam_id", "game_date", "game_pk"]
+        )
+    elif game_date:
         batter_where = f"""WHERE mlbam_id IN (
               SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES 
               WHERE game_date = '{game_date}'
           ) 
           AND game_date >= DATEADD(day, -365, '{game_date}')
           ORDER BY mlbam_id, game_date"""
-
         pitcher_where = f"""WHERE mlbam_id IN (
               SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES 
               WHERE game_date = '{game_date}'

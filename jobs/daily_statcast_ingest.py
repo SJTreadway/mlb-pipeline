@@ -25,7 +25,12 @@ if __name__ == "__main__":
 
     # only compute rolling features for today's confirmed lineup players
     todays_players = get_todays_lineup_players()
-    compute_rolling_features(
-        todays_players["batter_ids"], todays_players["pitcher_ids"], player_info["date"]
-    )
+    if todays_players["batter_ids"] or todays_players["pitcher_ids"]:
+        compute_rolling_features(
+            batter_ids=todays_players["batter_ids"],
+            pitcher_ids=todays_players["pitcher_ids"],
+            game_date=player_info["date"],
+        )
+    else:
+        log.info("No confirmed lineups yet — skipping rolling features")
     log.info("Daily pipeline complete")
