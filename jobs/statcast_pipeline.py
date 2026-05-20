@@ -449,7 +449,7 @@ def fetch_and_load_batter_stats(player_info: dict) -> int:
     game_date = player_info["date"]
     batter_ids = player_info["batter_ids"]
     conn = _get_snowflake_conn()
-    total_rows = 0
+    all_rows = []
 
     for mlbam_id in batter_ids:
         try:
@@ -459,20 +459,21 @@ def fetch_and_load_batter_stats(player_info: dict) -> int:
             game_df = _transform_batter_game(df)
             if game_df.empty:
                 continue
-            _upsert_to_snowflake(
-                conn,
-                game_df,
-                "RAW_BATTER_GAMES",
-                ["mlbam_id", "game_date", "game_pk"],
-            )
-            total_rows += len(game_df)
+            all_rows.append(game_df)
             time.sleep(0.2)
         except Exception as e:
             log.warning(f"Error fetching batter {mlbam_id}: {e}")
 
+    if all_rows:
+        combined = pd.concat(all_rows, ignore_index=True)
+        log.info(f"Upserting {len(combined)} batter rows in one batch")
+        _upsert_to_snowflake(
+            conn, combined, "RAW_BATTER_GAMES", ["mlbam_id", "game_date", "game_pk"]
+        )
+
     conn.close()
-    log.info(f"Loaded {total_rows} batter game rows")
-    return total_rows
+    log.info(f"Loaded {len(combined) if all_rows else 0} batter game rows")
+    return len(combined) if all_rows else 0
 
 
 def fetch_and_load_pitcher_stats(player_info: dict) -> int:
@@ -480,7 +481,7 @@ def fetch_and_load_pitcher_stats(player_info: dict) -> int:
     game_date = player_info["date"]
     pitcher_ids = player_info["pitcher_ids"]
     conn = _get_snowflake_conn()
-    total_rows = 0
+    all_rows = []
 
     for mlbam_id in pitcher_ids:
         try:
@@ -490,20 +491,21 @@ def fetch_and_load_pitcher_stats(player_info: dict) -> int:
             game_df = _transform_pitcher_game(df)
             if game_df.empty:
                 continue
-            _upsert_to_snowflake(
-                conn,
-                game_df,
-                "RAW_PITCHER_GAMES",
-                ["mlbam_id", "game_date", "game_pk"],
-            )
-            total_rows += len(game_df)
+            all_rows.append(game_df)
             time.sleep(0.2)
         except Exception as e:
             log.warning(f"Error fetching pitcher {mlbam_id}: {e}")
 
+    if all_rows:
+        combined = pd.concat(all_rows, ignore_index=True)
+        log.info(f"Upserting {len(combined)} pitcher rows in one batch")
+        _upsert_to_snowflake(
+            conn, combined, "RAW_PITCHER_GAMES", ["mlbam_id", "game_date", "game_pk"]
+        )
+
     conn.close()
-    log.info(f"Loaded {total_rows} pitcher game rows")
-    return total_rows
+    log.info(f"Loaded {len(combined) if all_rows else 0} pitcher game rows")
+    return len(combined) if all_rows else 0
 
 
 def update_game_results() -> int:
