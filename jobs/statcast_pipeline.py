@@ -602,6 +602,7 @@ def compute_rolling_features(
             cursor.fetchall(), columns=[desc[0].lower() for desc in cursor.description]
         )
         log.info(f"Pulled {len(batter_df)} batter rows")
+        t = time.time()
 
     cursor.execute(
         f"SELECT * FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES {pitcher_where}"
@@ -697,8 +698,10 @@ def compute_rolling_features(
         if batter_feat_rows:
             batter_features = pd.concat(batter_feat_rows, ignore_index=True)
             log.info(f"Computed batter features: {len(batter_features)} rows")
+            t = time.time()
             insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
             log.info(f"{year}: inserted {len(batter_features)} batter feature rows")
+            log.info(f"Batter upsert took {time.time() - t:.1f}s")
             del batter_features, batter_feat_rows
 
     # ── pitcher rolling features ──────────────────────────────────────────────
@@ -739,9 +742,11 @@ def compute_rolling_features(
 
     if pitcher_feat_rows:
         pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
+        t = time.time()
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
         insert_fn(conn, pitcher_features, "PITCHER_ROLLING_FEATURES")
         log.info(f"{year}: inserted {len(pitcher_features)} pitcher feature rows")
+        log.info(f"Pitcher upsert took {time.time() - t:.1f}s")
         del pitcher_features, pitcher_feat_rows
 
     conn.close()
