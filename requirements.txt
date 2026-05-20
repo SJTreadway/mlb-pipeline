@@ -9,3 +9,4 @@ beautifulsoup4
 curl_cffi
 pygithub
 cryptography
+MLB-StatsAPI
