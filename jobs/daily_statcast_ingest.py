@@ -21,9 +21,6 @@ if __name__ == "__main__":
 
     player_info = get_yesterdays_players()
 
-    # log lineup confirmation status for today
-    check_todays_lineups()
-
     batter_rows = fetch_and_load_batter_stats(player_info)
     pitcher_rows = fetch_and_load_pitcher_stats(player_info)
     update_game_results()
