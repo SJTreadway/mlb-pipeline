@@ -713,7 +713,13 @@ def compute_rolling_features(
             batter_feat_rows.append(df)
 
         if batter_feat_rows:
-            batter_features = pd.concat(batter_feat_rows, ignore_index=True)
+            # only keep most recent row per player
+            batter_features = (
+                batter_features.sort_values("game_date")
+                .groupby("mlbam_id")
+                .last()
+                .reset_index()
+            )
             log.info(f"Computed batter features: {len(batter_features)} rows")
             t = time.time()
             insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
@@ -758,6 +764,13 @@ def compute_rolling_features(
         pitcher_feat_rows.append(df)
 
     if pitcher_feat_rows:
+        # only keep most recent row per pitcher
+        pitcher_features = (
+            pitcher_features.sort_values("game_date")
+            .groupby("mlbam_id")
+            .last()
+            .reset_index()
+        )
         pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
         t = time.time()
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
