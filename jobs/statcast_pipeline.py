@@ -172,6 +172,18 @@ def _bulk_insert_snowflake(conn, df, table):
                 )
             )
 
+    # Convert pandas nullable dtypes (Int64, boolean, StringDtype) to numpy
+    # equivalents — Snowflake connector doesn't support pd.NA (natype)
+    df = df.convert_dtypes(convert_string=False).fillna(value=pd.NA)
+    for col in df.columns:
+        if hasattr(df[col], "dtype") and hasattr(df[col].dtype, "numpy_dtype"):
+            try:
+                df[col] = df[col].astype(df[col].dtype.numpy_dtype)
+            except Exception:
+                df[col] = df[col].astype(object)
+    # Replace remaining pd.NA with None for Snowflake compatibility
+    df = df.where(pd.notnull(df), None)
+
     cursor = conn.cursor()
     cols = df.columns.tolist()
     placeholders = ", ".join(["%s"] * len(cols))
