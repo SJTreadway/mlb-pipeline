@@ -10,6 +10,8 @@ from jobs.statcast_pipeline import (
     fetch_and_load_batter_stats,
     fetch_and_load_pitcher_stats,
     update_game_results,
+    fetch_and_load_pitch_stats,
+    update_bvp_history,
     compute_rolling_features,
 )
 
@@ -19,11 +21,11 @@ log = logging.getLogger(__name__)
 if __name__ == "__main__":
     log.info("Starting daily MLB statcast pipeline")
     player_info = get_yesterdays_players()
-    """ COMMENT OUT UNTIL DEBUG IS COMPLETE
     batter_rows = fetch_and_load_batter_stats(player_info)
     pitcher_rows = fetch_and_load_pitcher_stats(player_info)
+    fetch_and_load_pitch_stats(player_info)  # raw pitches → RAW_PITCHES
     update_game_results()
-    """
+    update_bvp_history()  # RAW_PITCHES → BVP_HISTORY
 
     # only compute rolling features for today's confirmed lineup players
     todays_players = get_todays_lineup_players()
