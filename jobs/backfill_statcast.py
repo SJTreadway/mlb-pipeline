@@ -168,10 +168,11 @@ def _fetch_and_load_batter(args: tuple) -> tuple[str, int]:
 
 
 def _fetch_and_load_pitcher(args: tuple) -> tuple[str, int]:
-    """Fetch pitcher game logs and upsert to RAW_PITCHER_GAMES.
+    """Fetch pitcher game logs and bulk insert to RAW_PITCHER_GAMES.
 
-    Uses upsert (not bulk insert) so that re-runs update existing rows
-    with new columns (H, BB, SO, ER, X2B, X3B) rather than creating duplicates.
+    Fast path — uses bulk insert, not upsert. Table should be truncated
+    before the backfill run when re-fetching existing data (--reset-pitchers
+    handles this automatically in main).
     """
     mlbam_id, year, completed = args
     key = f"{mlbam_id}_{year}"
@@ -192,12 +193,7 @@ def _fetch_and_load_pitcher(args: tuple) -> tuple[str, int]:
             return key, 0
         conn = _get_snowflake_conn()
         try:
-            _upsert_to_snowflake(
-                conn,
-                game_df,
-                "RAW_PITCHER_GAMES",
-                ["mlbam_id", "game_date", "game_pk"],
-            )
+            _bulk_insert_snowflake(conn, game_df, "RAW_PITCHER_GAMES")
         finally:
             conn.close()
         time.sleep(API_SLEEP)
@@ -313,6 +309,16 @@ if __name__ == "__main__":
         log.info("Resetting pitcher checkpoint — all pitchers will be re-fetched")
         checkpoint["completed_pitchers"] = []
         save_checkpoint(checkpoint)
+        log.info("Truncating RAW_PITCHER_GAMES for clean bulk insert …")
+        conn = _get_snowflake_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"TRUNCATE TABLE {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES")
+            conn.commit()
+            cursor.close()
+            log.info("RAW_PITCHER_GAMES truncated")
+        finally:
+            conn.close()
 
     if args.reset_batters:
         log.info("Resetting batter checkpoint — all batters will be re-fetched")
