@@ -333,12 +333,7 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
                 df["_source"] = "pybaseball"
                 conn = _get_snowflake_conn()
                 try:
-                    _upsert_to_snowflake(
-                        conn,
-                        df,
-                        "RAW_PITCHES",
-                        ["game_pk", "at_bat_number", "pitch_number"],
-                    )
+                    _bulk_insert_snowflake(conn, df, "RAW_PITCHES")
                     total_rows += len(df)
                     log.info(f"{start}: loaded {len(df):,} pitches")
                 finally:
