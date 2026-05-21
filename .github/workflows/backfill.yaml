@@ -1,6 +1,4 @@
-# .github/workflows/backfill.yml
 name: Backfill Statcast
-
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +10,38 @@ on:
         description: 'End year'
         required: false
         default: '2026'
+      reset_pitchers:
+        description: 'Reset pitcher checkpoint (re-fetch all pitchers)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      reset_batters:
+        description: 'Reset batter checkpoint (re-fetch all batters)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      pitchers_only:
+        description: 'Skip batter backfill'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      batters_only:
+        description: 'Skip pitcher backfill'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   backfill:
@@ -23,8 +53,18 @@ jobs:
       - name: Install dependencies
         run: python3.11 -m pip install -r requirements.txt
 
+      - name: Build backfill args
+        id: args
+        run: |
+          ARGS=""
+          [ "${{ github.event.inputs.reset_pitchers }}" = "true" ] && ARGS="$ARGS --reset-pitchers"
+          [ "${{ github.event.inputs.reset_batters }}"  = "true" ] && ARGS="$ARGS --reset-batters"
+          [ "${{ github.event.inputs.pitchers_only }}"  = "true" ] && ARGS="$ARGS --pitchers-only"
+          [ "${{ github.event.inputs.batters_only }}"   = "true" ] && ARGS="$ARGS --batters-only"
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+
       - name: Run backfill
-        run: python3.11 jobs/backfill_statcast.py
+        run: python3.11 jobs/backfill_statcast.py ${{ steps.args.outputs.args }}
         env:
           SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
