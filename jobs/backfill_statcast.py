@@ -29,6 +29,9 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from jobs.statcast_pipeline import (

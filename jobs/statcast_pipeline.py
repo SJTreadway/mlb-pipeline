@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from pybaseball import statcast_batter, statcast_pitcher, statcast
+from dotenv import load_dotenv
+
+load_dotenv()
 
 log = logging.getLogger(__name__)
 
