@@ -35,6 +35,8 @@ H_BB_PER_BF_DEF = 0.37
 SO_PER_BF_DEF = 0.2
 TB_BB_PERC_DEF = 0.45
 ER_PER_IP_DEF = 5 / 9
+FIP_PER_IP_DEF = 0.124 * 13 + 1.5 * 3 - 2 * 0.8
+FIP_PER_BF_DEF = 0.03 * 13 + 0.37 * 3 - 2 * 0.2
 
 
 # ── Snowflake ─────────────────────────────────────────────────────────────────
@@ -781,18 +783,23 @@ def compute_rolling_features(
             xb = x2b + 2 * x3b + 3 * hr
             tb = h + xb
             h_bb = h + bb
+            fip = 13 * hr + 3 * h_bb - 2 * so
 
             h_bb_mod = h_bb + H_BB_PER_IP_DEF * (ip_mod - ip)
             h_bb_mod2 = h_bb + H_BB_PER_BF_DEF * (bf_mod - bf)
             so_mod = so + SO_PER_BF_DEF * (bf_mod - bf)
             tb_bb_mod = (tb + bb) + TB_BB_PERC_DEF * (bf_mod - bf)
             er_mod = er + ER_PER_IP_DEF * (ip_mod - ip)
+            fip_mod = fip + FIP_PER_IP_DEF * (ip_mod - ip)
+            fip_mod2 = fip + FIP_PER_BF_DEF * (bf_mod - bf)
 
             df[f"whip_{w}"] = h_bb_mod / ip_mod
             df[f"so_perc_{w}"] = so_mod / bf_mod
             df[f"h_bb_perc_{w}"] = h_bb_mod2 / bf_mod
             df[f"tb_bb_perc_{w}"] = tb_bb_mod / bf_mod
             df[f"era_{w}"] = (er_mod / ip_mod) * 9
+            df[f"fip_{w}"] = fip_mod / ip_mod
+            df[f"fip_perc_{w}"] = fip_mod2 / bf_mod
 
         pitcher_feat_rows.append(df)
 
