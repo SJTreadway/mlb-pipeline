@@ -280,19 +280,40 @@ def backfill_pitchers(checkpoint: dict, year_filter: int | None = None) -> int:
     return total_rows
 
 
-def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
-    """Backfill RAW_PITCHES from pybaseball.statcast() one week at a time.
-
-    Weekly chunks (~100-150K rows) stay well within memory limits on the runner.
-    Monthly chunks (~500K+ rows) cause OOM on t3.medium/similar instances.
-    """
+def _fetch_and_load_pitches(args: tuple) -> tuple[str, int]:
+    """Fetch one week of pitches and bulk insert to RAW_PITCHES."""
     from pybaseball import statcast
-    from jobs.statcast_pipeline import (
-        _get_snowflake_conn,
-        _upsert_to_snowflake,
-        DATABASE,
-        SCHEMA,
-    )
+    from jobs.statcast_pipeline import _get_snowflake_conn, _bulk_insert_snowflake
+
+    start, end, completed = args
+    key = f"pitches_{start}"
+    if key in completed:
+        return key, 0
+    try:
+        df = statcast(start_dt=start, end_dt=end)
+        if df is None or df.empty:
+            return key, 0
+        df["_source"] = "pybaseball"
+        conn = _get_snowflake_conn()
+        try:
+            _bulk_insert_snowflake(conn, df, "RAW_PITCHES")
+        finally:
+            conn.close()
+        rows = len(df)
+        del df
+        time.sleep(API_SLEEP)
+        return key, rows
+    except Exception as e:
+        log.warning(f"Error fetching pitches {start}–{end}: {e}")
+        return key, 0
+
+
+def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
+    """Backfill RAW_PITCHES using threaded weekly chunks.
+
+    4 threads × 7 days = ~4x speedup over sequential. Weekly chunks are
+    ~70-100K rows each — safe on t2.medium with 4 concurrent threads.
+    """
     from datetime import date, timedelta
 
     completed = set(checkpoint.get("completed_pitches", []))
@@ -300,7 +321,6 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
     years = [year_filter] if year_filter else range(START_YEAR, END_YEAR + 1)
 
     for year in years:
-        # Generate weekly chunks for the season (Apr 1 - Oct 15)
         season_start = date(year, 3, 20)
         season_end = date(year, 10, 15)
         if year == date.today().year:
@@ -315,42 +335,34 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
             )
             chunk_start = chunk_end + timedelta(days=1)
 
-        for start, end in chunks:
-            key = f"pitches_{start}"
-            if key in completed:
-                log.info(f"Skipping {start} — already loaded")
-                continue
+        remaining = [(s, e) for s, e in chunks if f"pitches_{s}" not in completed]
+        log.info(f"{year}: {len(remaining)} weeks to backfill")
 
-            log.info(f"Fetching pitches {start} → {end} …")
-            try:
-                df = statcast(start_dt=start, end_dt=end)
-                if df is None or df.empty:
-                    completed.add(key)
+        args_list = [(s, e, completed) for s, e in remaining]
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                executor.submit(_fetch_and_load_pitches, a): a for a in args_list
+            }
+            for i, future in enumerate(
+                tqdm(as_completed(futures), total=len(futures), desc=f"{year} pitches"),
+                1,
+            ):
+                key, rows = future.result()
+                completed.add(key)
+                total_rows += rows
+                if i % 10 == 0:
                     checkpoint["completed_pitches"] = list(completed)
                     save_checkpoint(checkpoint)
-                    continue
+                    log.info(
+                        f"{year}: {i}/{len(remaining)} weeks done — {total_rows:,} rows"
+                    )
 
-                df["_source"] = "pybaseball"
-                conn = _get_snowflake_conn()
-                try:
-                    _bulk_insert_snowflake(conn, df, "RAW_PITCHES")
-                    total_rows += len(df)
-                    log.info(f"{start}: loaded {len(df):,} pitches")
-                finally:
-                    conn.close()
-
-                # explicitly free memory before next chunk
-                del df
-
-                completed.add(key)
-                checkpoint["completed_pitches"] = list(completed)
-                save_checkpoint(checkpoint)
-                time.sleep(API_SLEEP)
-
-            except Exception as e:
-                log.warning(f"Error fetching pitches {start}–{end}: {e}")
-
+        checkpoint["completed_pitches"] = list(completed)
+        save_checkpoint(checkpoint)
         log.info(f"Year {year} pitches complete — {total_rows:,} total rows")
+
+    return total_rows
 
     return total_rows
 
