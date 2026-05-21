@@ -155,9 +155,22 @@ def _bulk_insert_snowflake(conn, df, table):
         return
     _add_missing_columns(conn, df, table)
     table_cols = _get_table_columns(conn, table)
-    df = df[[c for c in df.columns if c.lower() in table_cols]]
+    df = df[[c for c in df.columns if c.lower() in table_cols]].copy()
     if df.empty:
         return
+
+    # Convert timestamp/datetime columns to strings — Snowflake connector
+    # does not support pandas Timestamp binding via executemany
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d %H:%M:%S")
+        elif df[col].dtype == object:
+            # catch any Timestamp objects stored as object dtype
+            df[col] = df[col].apply(
+                lambda v: (
+                    v.strftime("%Y-%m-%d %H:%M:%S") if hasattr(v, "strftime") else v
+                )
+            )
 
     cursor = conn.cursor()
     cols = df.columns.tolist()
