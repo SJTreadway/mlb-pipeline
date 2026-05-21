@@ -111,6 +111,26 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
         log.info(f"No rows to upsert to {table}")
         return
     df = df.copy()
+
+    # Convert timestamp/datetime columns to strings
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d %H:%M:%S")
+        elif df[col].dtype == object:
+            df[col] = df[col].apply(
+                lambda v: (
+                    v.strftime("%Y-%m-%d %H:%M:%S") if hasattr(v, "strftime") else v
+                )
+            )
+
+    # Convert pandas nullable dtypes to numpy — Snowflake connector doesn't support pd.NA
+    for col in df.columns:
+        if hasattr(df[col], "dtype") and hasattr(df[col].dtype, "numpy_dtype"):
+            try:
+                df[col] = df[col].astype(df[col].dtype.numpy_dtype)
+            except Exception:
+                df[col] = df[col].astype(object)
+
     df = df.replace(
         {np.nan: None, float("nan"): None, "nan": None, "NaN": None, "NAN": None}
     )
