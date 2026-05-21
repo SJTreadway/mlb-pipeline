@@ -1,11 +1,20 @@
 # .github/workflows/daily_ingest.yml
 name: Daily Statcast Ingest
 on:
-  schedule:
-    - cron: '0 16 * * *'  # 11am CST
-    - cron: '0 18 * * *'  # 1pm CST
-    - cron: '0 20 * * *'  # 3pm CST
   workflow_dispatch:
+    inputs:
+      refresh_data:
+        description: 'Fetch new data from Statcast API (set false for 2nd/3rd runs)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  schedule:
+    - cron: '0 15 * * *'   # 10am CT (first run, always refresh)
+    - cron: '0 17 * * *'   # 12pm CT
+    - cron: '0 22 * * *'   # 5pm CT
 
 jobs:
   ingest:
@@ -17,9 +26,20 @@ jobs:
       - name: Install dependencies
         run: python3.11 -m pip install -r requirements.txt
 
+      - name: Set refresh flag
+        id: refresh
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" = "15" ]; then
+            echo "refresh=true" >> $GITHUB_OUTPUT
+          else
+            echo "refresh=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run daily statcast ingestion
         run: python3.11 jobs/daily_statcast_ingest.py
         env:
+          REFRESH_DATA:           ${{ github.event.inputs.refresh_data || 'true' }}
           SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
