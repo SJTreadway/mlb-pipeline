@@ -26,6 +26,22 @@ on:
         options:
           - 'false'
           - 'true'
+      pitches_only:
+        description: 'Only backfill RAW_PITCHES (pitch-level BvP data)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      reset_pitches:
+        description: 'Reset pitch checkpoint (re-fetch all pitch data)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       pitchers_only:
         description: 'Skip batter backfill'
         required: false
@@ -59,8 +75,10 @@ jobs:
           ARGS=""
           [ "${{ github.event.inputs.reset_pitchers }}" = "true" ] && ARGS="$ARGS --reset-pitchers"
           [ "${{ github.event.inputs.reset_batters }}"  = "true" ] && ARGS="$ARGS --reset-batters"
+          [ "${{ github.event.inputs.reset_pitches }}"  = "true" ] && ARGS="$ARGS --reset-pitches"
           [ "${{ github.event.inputs.pitchers_only }}"  = "true" ] && ARGS="$ARGS --pitchers-only"
           [ "${{ github.event.inputs.batters_only }}"   = "true" ] && ARGS="$ARGS --batters-only"
+          [ "${{ github.event.inputs.pitches_only }}"   = "true" ] && ARGS="$ARGS --pitches-only"
           echo "args=$ARGS" >> $GITHUB_OUTPUT
 
       - name: Run backfill

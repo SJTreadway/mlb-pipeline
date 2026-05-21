@@ -280,7 +280,75 @@ def backfill_pitchers(checkpoint: dict, year_filter: int | None = None) -> int:
     return total_rows
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
+    """Backfill RAW_PITCHES from pybaseball.statcast() one date at a time.
+
+    statcast() returns all pitches for a date range in one call — much faster
+    than per-player calls. We iterate month by month to avoid timeouts.
+    """
+    from pybaseball import statcast
+    from jobs.statcast_pipeline import (
+        _get_snowflake_conn,
+        _upsert_to_snowflake,
+        DATABASE,
+        SCHEMA,
+    )
+
+    completed = set(checkpoint.get("completed_pitches", []))
+    total_rows = 0
+    years = [year_filter] if year_filter else range(START_YEAR, END_YEAR + 1)
+
+    for year in years:
+        # iterate month by month to keep API calls manageable
+        months = [
+            (f"{year}-03-01", f"{year}-03-31"),
+            (f"{year}-04-01", f"{year}-04-30"),
+            (f"{year}-05-01", f"{year}-05-31"),
+            (f"{year}-06-01", f"{year}-06-30"),
+            (f"{year}-07-01", f"{year}-07-31"),
+            (f"{year}-08-01", f"{year}-08-31"),
+            (f"{year}-09-01", f"{year}-09-30"),
+            (f"{year}-10-01", f"{year}-10-15"),
+        ]
+
+        for start, end in months:
+            key = f"pitches_{start}"
+            if key in completed:
+                log.info(f"Skipping {start} — already loaded")
+                continue
+
+            log.info(f"Fetching pitches {start} → {end} …")
+            try:
+                df = statcast(start_dt=start, end_dt=end)
+                if df is None or df.empty:
+                    completed.add(key)
+                    continue
+
+                df["_source"] = "pybaseball"
+                conn = _get_snowflake_conn()
+                try:
+                    _upsert_to_snowflake(
+                        conn,
+                        df,
+                        "RAW_PITCHES",
+                        ["game_pk", "at_bat_number", "pitch_number"],
+                    )
+                    total_rows += len(df)
+                    log.info(f"{start}: loaded {len(df)} pitches")
+                finally:
+                    conn.close()
+
+                completed.add(key)
+                checkpoint["completed_pitches"] = list(completed)
+                save_checkpoint(checkpoint)
+                time.sleep(API_SLEEP)
+
+            except Exception as e:
+                log.warning(f"Error fetching pitches for {start}–{end}: {e}")
+
+        log.info(f"Year {year} pitches complete — {total_rows} total rows")
+
+    return total_rows
 
 
 def parse_args():
@@ -288,14 +356,24 @@ def parse_args():
     p.add_argument("--batters-only", action="store_true")
     p.add_argument("--pitchers-only", action="store_true")
     p.add_argument(
+        "--pitches-only",
+        action="store_true",
+        help="Only backfill RAW_PITCHES (pitch-level data for BvP)",
+    )
+    p.add_argument(
         "--reset-pitchers",
         action="store_true",
-        help="Clear pitcher checkpoint and re-fetch all pitchers (use after schema changes)",
+        help="Clear pitcher checkpoint and re-fetch all pitchers",
     )
     p.add_argument(
         "--reset-batters",
         action="store_true",
         help="Clear batter checkpoint and re-fetch all batters",
+    )
+    p.add_argument(
+        "--reset-pitches",
+        action="store_true",
+        help="Clear pitch checkpoint and re-fetch all pitches",
     )
     p.add_argument("--year", type=int, default=None, help="Backfill a single year only")
     return p.parse_args()
@@ -309,14 +387,13 @@ if __name__ == "__main__":
         log.info("Resetting pitcher checkpoint — all pitchers will be re-fetched")
         checkpoint["completed_pitchers"] = []
         save_checkpoint(checkpoint)
-        log.info("Truncating RAW_PITCHER_GAMES for clean bulk insert …")
+        log.info("Truncating RAW_PITCHER_GAMES …")
         conn = _get_snowflake_conn()
         try:
             cursor = conn.cursor()
             cursor.execute(f"TRUNCATE TABLE {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES")
             conn.commit()
             cursor.close()
-            log.info("RAW_PITCHER_GAMES truncated")
         finally:
             conn.close()
 
@@ -324,30 +401,39 @@ if __name__ == "__main__":
         log.info("Resetting batter checkpoint — all batters will be re-fetched")
         checkpoint["completed_batters"] = []
         save_checkpoint(checkpoint)
-        log.info("Truncating RAW_BATTER_GAMES for clean bulk insert …")
+        log.info("Truncating RAW_BATTER_GAMES …")
         conn = _get_snowflake_conn()
         try:
             cursor = conn.cursor()
             cursor.execute(f"TRUNCATE TABLE {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES")
             conn.commit()
             cursor.close()
-            log.info("RAW_BATTER_GAMES truncated")
         finally:
             conn.close()
+
+    if args.reset_pitches:
+        log.info("Resetting pitch checkpoint — all pitches will be re-fetched")
+        checkpoint["completed_pitches"] = []
+        save_checkpoint(checkpoint)
 
     log.info(
         f"Starting backfill {START_YEAR}–{END_YEAR}"
         + (f" (year={args.year})" if args.year else "")
     )
 
-    if not args.pitchers_only:
-        log.info("--- Backfilling batters ---")
-        batter_rows = backfill_batters(checkpoint, year_filter=args.year)
-        log.info(f"Batter backfill complete — {batter_rows} total rows")
+    if args.pitches_only:
+        log.info("--- Backfilling pitches ---")
+        pitch_rows = backfill_pitches(checkpoint, year_filter=args.year)
+        log.info(f"Pitch backfill complete — {pitch_rows} total rows")
+    else:
+        if not args.pitchers_only:
+            log.info("--- Backfilling batters ---")
+            batter_rows = backfill_batters(checkpoint, year_filter=args.year)
+            log.info(f"Batter backfill complete — {batter_rows} total rows")
 
-    if not args.batters_only:
-        log.info("--- Backfilling pitchers ---")
-        pitcher_rows = backfill_pitchers(checkpoint, year_filter=args.year)
-        log.info(f"Pitcher backfill complete — {pitcher_rows} total rows")
+        if not args.batters_only:
+            log.info("--- Backfilling pitchers ---")
+            pitcher_rows = backfill_pitchers(checkpoint, year_filter=args.year)
+            log.info(f"Pitcher backfill complete — {pitcher_rows} total rows")
 
     log.info("Backfill complete!")

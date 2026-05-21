@@ -6,7 +6,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 
 import requests
-from pybaseball import statcast_batter, statcast_pitcher
+from pybaseball import statcast_batter, statcast_pitcher, statcast
 
 log = logging.getLogger(__name__)
 
@@ -806,7 +806,110 @@ def compute_rolling_features(
     return "success"
 
 
+def fetch_and_load_pitch_stats(player_info: dict) -> int:
+    """Pull raw pitch-level Statcast data for date → Snowflake RAW_PITCHES.
+
+    Uses pybaseball.statcast() which returns all pitches for a date range in
+    one call. Column names from pybaseball match RAW_PITCHES schema directly.
+    The PITCHES view on top of RAW_PITCHES handles deduplication.
+    """
+    game_date = player_info["date"]
+    log.info(f"Fetching raw pitches for {game_date} …")
+
+    try:
+        df = statcast(start_dt=game_date, end_dt=game_date)
+    except Exception as e:
+        log.warning(f"Error fetching pitches for {game_date}: {e}")
+        return 0
+
+    if df is None or df.empty:
+        log.info(f"No pitch data for {game_date}")
+        return 0
+
+    df["_source"] = "pybaseball"
+
+    conn = _get_snowflake_conn()
+    try:
+        _upsert_to_snowflake(
+            conn,
+            df,
+            "RAW_PITCHES",
+            ["game_pk", "at_bat_number", "pitch_number"],
+        )
+        log.info(f"Loaded {len(df)} pitch rows for {game_date}")
+    finally:
+        conn.close()
+    return len(df)
+
+
+def update_bvp_history() -> int:
+    """Refresh BVP_HISTORY from PITCHES view for yesterday's games.
+
+    Reads from the deduplicated PITCHES view (not RAW_PITCHES directly)
+    and merges new PA-level BvP data into BVP_HISTORY.
+    """
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    conn = _get_snowflake_conn()
+    cursor = conn.cursor()
+
+    merge_sql = f"""
+        MERGE INTO {DATABASE}.{SCHEMA}.BVP_HISTORY tgt
+        USING (
+            WITH pa_level AS (
+                SELECT
+                    batter, pitcher, game_date, game_pk,
+                    CASE WHEN events = 'home_run' THEN 1 ELSE 0 END AS is_hr,
+                    1 AS is_pa
+                FROM {DATABASE}.{SCHEMA}.PITCHES
+                WHERE game_date = '{yesterday}'
+                  AND events IS NOT NULL AND events != ''
+            ),
+            pa_by_game AS (
+                SELECT batter, pitcher, game_date, game_pk,
+                       SUM(is_pa) AS pa, SUM(is_hr) AS hr
+                FROM pa_level
+                GROUP BY batter, pitcher, game_date, game_pk
+            ),
+            prior AS (
+                SELECT batter, pitcher,
+                       SUM(bvp_pa_prior) + SUM(pa) AS bvp_pa_prior,
+                       SUM(bvp_hr_prior) + SUM(hr)  AS bvp_hr_prior
+                FROM {DATABASE}.{SCHEMA}.BVP_HISTORY
+                GROUP BY batter, pitcher
+            )
+            SELECT
+                p.batter, p.pitcher, p.game_date, p.game_pk,
+                p.pa, p.hr,
+                COALESCE(pr.bvp_pa_prior, 0) AS bvp_pa_prior,
+                COALESCE(pr.bvp_hr_prior, 0) AS bvp_hr_prior
+            FROM pa_by_game p
+            LEFT JOIN prior pr
+                ON p.batter  = pr.batter
+               AND p.pitcher = pr.pitcher
+        ) src
+        ON  tgt.batter  = src.batter
+        AND tgt.pitcher = src.pitcher
+        AND tgt.game_pk = src.game_pk
+        WHEN NOT MATCHED THEN INSERT
+            (batter, pitcher, game_date, game_pk, pa, hr, bvp_pa_prior, bvp_hr_prior)
+        VALUES
+            (src.batter, src.pitcher, src.game_date, src.game_pk,
+             src.pa, src.hr, src.bvp_pa_prior, src.bvp_hr_prior)
+    """
+
+    try:
+        cursor.execute(merge_sql)
+        rows = cursor.rowcount
+        conn.commit()
+        log.info(f"BVP_HISTORY updated — {rows} rows merged for {yesterday}")
+    finally:
+        cursor.close()
+        conn.close()
+    return rows
+
+
 def get_todays_lineup_players() -> dict:
+    """Get batter and pitcher IDs from today's confirmed lineups."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     resp = requests.get(
         f"{MLB_API}/schedule",
