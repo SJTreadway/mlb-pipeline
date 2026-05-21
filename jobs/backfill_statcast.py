@@ -324,6 +324,16 @@ if __name__ == "__main__":
         log.info("Resetting batter checkpoint — all batters will be re-fetched")
         checkpoint["completed_batters"] = []
         save_checkpoint(checkpoint)
+        log.info("Truncating RAW_BATTER_GAMES for clean bulk insert …")
+        conn = _get_snowflake_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"TRUNCATE TABLE {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES")
+            conn.commit()
+            cursor.close()
+            log.info("RAW_BATTER_GAMES truncated")
+        finally:
+            conn.close()
 
     log.info(
         f"Starting backfill {START_YEAR}–{END_YEAR}"
