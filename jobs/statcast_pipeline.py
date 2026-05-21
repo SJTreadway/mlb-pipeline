@@ -83,7 +83,6 @@ def _get_table_columns(conn, table):
 
 
 def _add_missing_columns(conn, df, table):
-    """Add any columns in df that don't exist in the table yet."""
     type_map = {
         "int64": "INTEGER",
         "float64": "FLOAT",
@@ -128,8 +127,8 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     placeholders = ", ".join(["%s"] * len(cols))
     col_str = ", ".join(cols)
     where = " AND ".join([f"{c} = %s" for c in unique_cols])
-
     unique_vals = df[unique_cols].drop_duplicates()
+
     if len(unique_cols) == 1:
         ids = tuple(unique_vals[unique_cols[0]].tolist())
         cursor.execute(
@@ -178,7 +177,6 @@ def _bulk_insert_snowflake(conn, df, table):
 
 
 def _truncate_and_bulk_insert(conn, df, table):
-    """Truncate table and bulk insert — for full recompute only."""
     if df.empty:
         return
     _add_missing_columns(conn, df, table)
@@ -212,7 +210,6 @@ def _rolling_sum(df, col, winsize):
 
 
 def _transform_batter_game(df):
-    """Pitch-level Statcast → one row per batter-game."""
     if df.empty:
         return pd.DataFrame()
 
@@ -312,10 +309,7 @@ def _transform_batter_game(df):
 
 def _transform_pitcher_game(df):
     """Pitch-level Statcast → one row per pitcher-game.
-
-    Now includes H, BB, SO, ER, X2B, X3B so WHIP / SO% / ERA / FIP
-    can be computed in compute_rolling_features() and stored in
-    PITCHER_ROLLING_FEATURES.
+    Includes H, BB, SO, ER, X2B, X3B for WHIP / SO% / ERA / FIP computation.
     """
     if df.empty:
         return pd.DataFrame()
@@ -360,7 +354,7 @@ def _transform_pitcher_game(df):
         bb = len(pa[pa["events"].isin(["walk", "intent_walk"])])
         so = len(pa[pa["events"] == "strikeout"])
         r = int(pa["runs_scored"].sum())
-        er = r  # ER ≈ R (no inherited-runner tracking in Statcast pitch logs)
+        er = r  # ER ≈ R
 
         batted = pa[pa["launch_speed"].notna()].copy()
         n_batted = len(batted)
@@ -403,11 +397,8 @@ def _transform_pitcher_game(df):
 def get_yesterdays_players() -> dict:
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     log.info(f"Fetching players for {yesterday}")
-
     resp = requests.get(
-        f"{MLB_API}/schedule",
-        params={"sportId": 1, "date": yesterday},
-        timeout=15,
+        f"{MLB_API}/schedule", params={"sportId": 1, "date": yesterday}, timeout=15
     )
     resp.raise_for_status()
 
@@ -481,7 +472,6 @@ def fetch_and_load_batter_stats(player_info: dict) -> int:
 
 
 def fetch_and_load_pitcher_stats(player_info: dict) -> int:
-    """Pull Statcast pitcher data for date → Snowflake RAW_PITCHER_GAMES."""
     game_date = player_info["date"]
     pitcher_ids = player_info["pitcher_ids"]
     conn = _get_snowflake_conn()
@@ -514,10 +504,8 @@ def fetch_and_load_pitcher_stats(player_info: dict) -> int:
 
 
 def update_game_results() -> int:
-    """Fetch yesterday's game outcomes → Snowflake GAME_RESULTS."""
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     conn = _get_snowflake_conn()
-
     resp = requests.get(
         f"{MLB_API}/schedule",
         params={"sportId": 1, "date": yesterday, "hydrate": "team,linescore"},
@@ -599,7 +587,14 @@ def compute_rolling_features(
     else:
         batter_where = "ORDER BY mlbam_id, game_date"
         pitcher_where = "ORDER BY mlbam_id, game_date"
-        insert_fn = lambda conn, df, table: _truncate_and_bulk_insert(conn, df, table)
+        log.info("Full recompute — truncating feature tables …")
+        for table in ["BATTER_ROLLING_FEATURES", "PITCHER_ROLLING_FEATURES"]:
+            trunc_cur = conn.cursor()
+            trunc_cur.execute(f"TRUNCATE TABLE {DATABASE}.{SCHEMA}.{table}")
+            conn.commit()
+            trunc_cur.close()
+            log.info(f"Truncated {table}")
+        insert_fn = lambda conn, df, table: _bulk_insert_snowflake(conn, df, table)
 
     # ── pull raw data ─────────────────────────────────────────────────────────
     if not pitcher_only:
@@ -648,7 +643,6 @@ def compute_rolling_features(
         for mlbam_id, df in batter_df.groupby("mlbam_id"):
             df = df.sort_values("game_date").reset_index(drop=True)
             new_cols = {}
-
             for w in WINDOWS_BAT:
                 for col in bat_stat_cols:
                     if col in df.columns:
@@ -707,8 +701,6 @@ def compute_rolling_features(
             batter_features = batter_features.sort_values(
                 ["mlbam_id", "game_date"]
             ).reset_index(drop=True)
-            # incremental mode (daily ingest): only upsert latest row per player
-            # full recompute: keep all rows so training has complete history
             if batter_ids and pitcher_ids:
                 batter_features = (
                     batter_features.groupby("mlbam_id").last().reset_index()
@@ -721,10 +713,6 @@ def compute_rolling_features(
 
     # ── pitcher rolling features ──────────────────────────────────────────────
     pitcher_feat_rows = []
-
-    # Full stat col list — new cols (h, bb, so, er, x2b, x3b, ip) only populate
-    # after the backfill adds them to RAW_PITCHER_GAMES. The `if col in df.columns`
-    # guard means old data silently produces zeros until backfilled.
     pitch_stat_cols = [
         "hr",
         "bfp",
@@ -742,7 +730,6 @@ def compute_rolling_features(
     for mlbam_id, df in pitcher_df.groupby("mlbam_id"):
         df = df.sort_values("game_date").reset_index(drop=True)
         new_cols = {}
-
         for w in WINDOWS_PITCH:
             for col in pitch_stat_cols:
                 if col in df.columns:
@@ -773,11 +760,9 @@ def compute_rolling_features(
             x2b = s("x2b")
             x3b = s("x3b")
 
-            # ── existing features ─────────────────────────────────────────
             df[f"hr_per_bf_{w}"] = hr / bf.replace(0, np.nan)
             df[f"fb_perc_{w}"] = fb / bat.replace(0, np.nan)
 
-            # ── new smoothed rate features ────────────────────────────────
             ip_mod = np.maximum(ip, w * IP_PER_GAME_DEF)
             bf_mod = np.maximum(bf, w * BF_PER_GAME_DEF)
             xb = x2b + 2 * x3b + 3 * hr
@@ -808,8 +793,6 @@ def compute_rolling_features(
         pitcher_features = pitcher_features.sort_values(
             ["mlbam_id", "game_date"]
         ).reset_index(drop=True)
-        # incremental mode (daily ingest): only upsert latest row per player
-        # full recompute: keep all rows so training has complete history
         if batter_ids and pitcher_ids:
             pitcher_features = pitcher_features.groupby("mlbam_id").last().reset_index()
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
@@ -824,7 +807,6 @@ def compute_rolling_features(
 
 
 def get_todays_lineup_players() -> dict:
-    """Get batter and pitcher IDs from today's confirmed lineups."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     resp = requests.get(
         f"{MLB_API}/schedule",
