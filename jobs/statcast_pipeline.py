@@ -702,12 +702,15 @@ def compute_rolling_features(
 
         if batter_feat_rows:
             batter_features = pd.concat(batter_feat_rows, ignore_index=True)
-            batter_features = (
-                batter_features.sort_values("game_date")
-                .groupby("mlbam_id")
-                .last()
-                .reset_index()
-            )
+            batter_features = batter_features.sort_values(
+                ["mlbam_id", "game_date"]
+            ).reset_index(drop=True)
+            # incremental mode (daily ingest): only upsert latest row per player
+            # full recompute: keep all rows so training has complete history
+            if batter_ids and pitcher_ids:
+                batter_features = (
+                    batter_features.groupby("mlbam_id").last().reset_index()
+                )
             log.info(f"Computed batter features: {len(batter_features)} rows")
             t = time.time()
             insert_fn(conn, batter_features, "BATTER_ROLLING_FEATURES")
@@ -795,12 +798,13 @@ def compute_rolling_features(
 
     if pitcher_feat_rows:
         pitcher_features = pd.concat(pitcher_feat_rows, ignore_index=True)
-        pitcher_features = (
-            pitcher_features.sort_values("game_date")
-            .groupby("mlbam_id")
-            .last()
-            .reset_index()
-        )
+        pitcher_features = pitcher_features.sort_values(
+            ["mlbam_id", "game_date"]
+        ).reset_index(drop=True)
+        # incremental mode (daily ingest): only upsert latest row per player
+        # full recompute: keep all rows so training has complete history
+        if batter_ids and pitcher_ids:
+            pitcher_features = pitcher_features.groupby("mlbam_id").last().reset_index()
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
         t = time.time()
         insert_fn(conn, pitcher_features, "PITCHER_ROLLING_FEATURES")

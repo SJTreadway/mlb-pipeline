@@ -15,6 +15,10 @@ on:
         description: 'Pitcher only (true/false)'
         required: false
         default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   compute_features:
