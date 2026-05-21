@@ -281,10 +281,10 @@ def backfill_pitchers(checkpoint: dict, year_filter: int | None = None) -> int:
 
 
 def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
-    """Backfill RAW_PITCHES from pybaseball.statcast() one date at a time.
+    """Backfill RAW_PITCHES from pybaseball.statcast() one week at a time.
 
-    statcast() returns all pitches for a date range in one call — much faster
-    than per-player calls. We iterate month by month to avoid timeouts.
+    Weekly chunks (~100-150K rows) stay well within memory limits on the runner.
+    Monthly chunks (~500K+ rows) cause OOM on t3.medium/similar instances.
     """
     from pybaseball import statcast
     from jobs.statcast_pipeline import (
@@ -293,25 +293,29 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
         DATABASE,
         SCHEMA,
     )
+    from datetime import date, timedelta
 
     completed = set(checkpoint.get("completed_pitches", []))
     total_rows = 0
     years = [year_filter] if year_filter else range(START_YEAR, END_YEAR + 1)
 
     for year in years:
-        # iterate month by month to keep API calls manageable
-        months = [
-            (f"{year}-03-01", f"{year}-03-31"),
-            (f"{year}-04-01", f"{year}-04-30"),
-            (f"{year}-05-01", f"{year}-05-31"),
-            (f"{year}-06-01", f"{year}-06-30"),
-            (f"{year}-07-01", f"{year}-07-31"),
-            (f"{year}-08-01", f"{year}-08-31"),
-            (f"{year}-09-01", f"{year}-09-30"),
-            (f"{year}-10-01", f"{year}-10-15"),
-        ]
+        # Generate weekly chunks for the season (Apr 1 - Oct 15)
+        season_start = date(year, 3, 20)
+        season_end = date(year, 10, 15)
+        if year == date.today().year:
+            season_end = date.today() - timedelta(days=1)
 
-        for start, end in months:
+        chunks = []
+        chunk_start = season_start
+        while chunk_start <= season_end:
+            chunk_end = min(chunk_start + timedelta(days=6), season_end)
+            chunks.append(
+                (chunk_start.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d"))
+            )
+            chunk_start = chunk_end + timedelta(days=1)
+
+        for start, end in chunks:
             key = f"pitches_{start}"
             if key in completed:
                 log.info(f"Skipping {start} — already loaded")
@@ -322,6 +326,8 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
                 df = statcast(start_dt=start, end_dt=end)
                 if df is None or df.empty:
                     completed.add(key)
+                    checkpoint["completed_pitches"] = list(completed)
+                    save_checkpoint(checkpoint)
                     continue
 
                 df["_source"] = "pybaseball"
@@ -334,9 +340,12 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
                         ["game_pk", "at_bat_number", "pitch_number"],
                     )
                     total_rows += len(df)
-                    log.info(f"{start}: loaded {len(df)} pitches")
+                    log.info(f"{start}: loaded {len(df):,} pitches")
                 finally:
                     conn.close()
+
+                # explicitly free memory before next chunk
+                del df
 
                 completed.add(key)
                 checkpoint["completed_pitches"] = list(completed)
@@ -344,9 +353,9 @@ def backfill_pitches(checkpoint: dict, year_filter: int | None = None) -> int:
                 time.sleep(API_SLEEP)
 
             except Exception as e:
-                log.warning(f"Error fetching pitches for {start}–{end}: {e}")
+                log.warning(f"Error fetching pitches {start}–{end}: {e}")
 
-        log.info(f"Year {year} pitches complete — {total_rows} total rows")
+        log.info(f"Year {year} pitches complete — {total_rows:,} total rows")
 
     return total_rows
 
