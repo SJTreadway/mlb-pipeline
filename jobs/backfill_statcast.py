@@ -64,6 +64,8 @@ API_SLEEP = 0.2
 MAX_WORKERS = 8
 CHECKPOINT_FILE = "backfill_checkpoint.json"
 
+MIN_GS = int(os.environ.get("MIN_GS", 5))
+
 
 # ── Checkpoint ────────────────────────────────────────────────────────────────
 
