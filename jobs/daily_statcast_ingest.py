@@ -25,10 +25,24 @@ if __name__ == "__main__":
     log.info("Starting daily MLB statcast pipeline")
     player_info = get_yesterdays_players()
     if REFRESH_DATA:
-        batter_rows = fetch_and_load_batter_stats(player_info)
-        pitcher_rows = fetch_and_load_pitcher_stats(player_info)
-        fetch_and_load_pitch_stats(player_info)  # raw pitches → RAW_PITCHES
-        update_game_results()
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                executor.submit(fetch_and_load_batter_stats, player_info): "batters",
+                executor.submit(fetch_and_load_pitcher_stats, player_info): "pitchers",
+                executor.submit(fetch_and_load_pitch_stats, player_info): "pitches",
+                executor.submit(update_game_results): "game_results",
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                    log.info(f"{name} complete")
+                except Exception as e:
+                    log.warning(f"{name} failed: {e}")
+
+        # must run after pitch stats are loaded
         update_bvp_history()  # RAW_PITCHES → BVP_HISTORY
 
     # only compute rolling features for today's confirmed lineup players
