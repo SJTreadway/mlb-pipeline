@@ -23,8 +23,8 @@ REFRESH_DATA = os.environ.get("REFRESH_DATA", "1") == "1"
 
 if __name__ == "__main__":
     log.info("Starting daily MLB statcast pipeline")
+    player_info = get_yesterdays_players()
     if REFRESH_DATA:
-        player_info = get_yesterdays_players()
         batter_rows = fetch_and_load_batter_stats(player_info)
         pitcher_rows = fetch_and_load_pitcher_stats(player_info)
         fetch_and_load_pitch_stats(player_info)  # raw pitches → RAW_PITCHES
