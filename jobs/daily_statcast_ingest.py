@@ -18,7 +18,7 @@ from jobs.statcast_pipeline import (
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-REFRESH_DATA = os.environ.get("REFRESH_DATA", "1") == "1"
+REFRESH_DATA = os.environ.get("REFRESH_DATA", "false") == "true"
 
 
 if __name__ == "__main__":

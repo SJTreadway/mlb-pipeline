@@ -6,7 +6,7 @@ on:
       refresh_data:
         description: 'Fetch new data from Statcast API (set false for 2nd/3rd runs)'
         required: false
-        default: 'true'
+        default: 'false'
         type: choice
         options:
           - 'true'
@@ -35,9 +35,9 @@ jobs:
           else
             HOUR=$(date -u +%H)
             if [ "$HOUR" = "15" ]; then
-              echo "refresh=1" >> $GITHUB_OUTPUT
+              echo "refresh=true" >> $GITHUB_OUTPUT
             else
-              echo "refresh=0" >> $GITHUB_OUTPUT
+              echo "refresh=false" >> $GITHUB_OUTPUT
             fi
           fi
 
