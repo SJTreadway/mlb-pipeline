@@ -29,11 +29,16 @@ jobs:
       - name: Set refresh flag
         id: refresh
         run: |
-          HOUR=$(date -u +%H)
-          if [ "$HOUR" = "15" ]; then
-            echo "refresh=true" >> $GITHUB_OUTPUT
+          INPUT="${{ github.event.inputs.refresh_data }}"
+          if [ -n "$INPUT" ]; then
+            echo "refresh=$INPUT" >> $GITHUB_OUTPUT
           else
-            echo "refresh=false" >> $GITHUB_OUTPUT
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "15" ]; then
+              echo "refresh=true" >> $GITHUB_OUTPUT
+            else
+              echo "refresh=false" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Run daily statcast ingestion
