@@ -35,16 +35,16 @@ jobs:
           else
             HOUR=$(date -u +%H)
             if [ "$HOUR" = "15" ]; then
-              echo "refresh=true" >> $GITHUB_OUTPUT
+              echo "refresh=1" >> $GITHUB_OUTPUT
             else
-              echo "refresh=false" >> $GITHUB_OUTPUT
+              echo "refresh=0" >> $GITHUB_OUTPUT
             fi
           fi
 
       - name: Run daily statcast ingestion
         run: python3.11 jobs/daily_statcast_ingest.py
         env:
-          REFRESH_DATA:           ${{ github.event.inputs.refresh_data || 'true' }}
+          REFRESH_DATA:           ${{ github.event.inputs.refresh_data || 0 }}
           SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
