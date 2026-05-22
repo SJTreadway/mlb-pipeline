@@ -44,7 +44,7 @@ jobs:
       - name: Run daily statcast ingestion
         run: python3.11 jobs/daily_statcast_ingest.py
         env:
-          REFRESH_DATA:           ${{ github.event.inputs.refresh_data || 0 }}
+          REFRESH_DATA:           ${{ steps.refresh.outputs.refresh }}
           SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
