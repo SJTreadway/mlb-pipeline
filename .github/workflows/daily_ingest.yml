@@ -12,7 +12,8 @@ on:
           - 'true'
           - 'false'
   schedule:
-    - cron: '0 14 * * *'   # 9am CT (first run, always refresh)
+    - cron: '0 12 * * *'   # 7am CT (first run, always refresh)
+    - cron: '0 14 * * *'   # 9am CT
     - cron: '0 16 * * *'   # 11pm CT
     - cron: '0 21 * * *'   # 4pm CT
     - cron: '0 23 * * *'   # 6pm CT
@@ -35,7 +36,7 @@ jobs:
             echo "refresh=$INPUT" >> $GITHUB_OUTPUT
           else
             HOUR=$(date -u +%H)
-            if [ "$HOUR" = "14" ]; then
+            if [ "$HOUR" = "12" ]; then
               echo "refresh=true" >> $GITHUB_OUTPUT
             else
               echo "refresh=false" >> $GITHUB_OUTPUT
