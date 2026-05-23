@@ -15,6 +15,7 @@ on:
     - cron: '0 14 * * *'   # 9am CT (first run, always refresh)
     - cron: '0 16 * * *'   # 11pm CT
     - cron: '0 21 * * *'   # 4pm CT
+    - cron: '0 23 * * *'   # 6pm CT
 
 jobs:
   ingest:
