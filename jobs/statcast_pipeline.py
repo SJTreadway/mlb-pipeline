@@ -855,12 +855,6 @@ def compute_rolling_features(
 
 
 def fetch_and_load_pitch_stats(player_info: dict) -> int:
-    """Pull raw pitch-level Statcast data for date → Snowflake RAW_PITCHES.
-
-    Uses pybaseball.statcast() which returns all pitches for a date range in
-    one call. Column names from pybaseball match RAW_PITCHES schema directly.
-    The PITCHES view on top of RAW_PITCHES handles deduplication.
-    """
     game_date = player_info["date"]
     log.info(f"Fetching raw pitches for {game_date} …")
 
@@ -878,12 +872,16 @@ def fetch_and_load_pitch_stats(player_info: dict) -> int:
 
     conn = _get_snowflake_conn()
     try:
-        _upsert_to_snowflake(
-            conn,
-            df,
-            "RAW_PITCHES",
-            ["game_pk", "at_bat_number", "pitch_number"],
+        # One DELETE by date instead of ~4,000 individual row deletes
+        cursor = conn.cursor()
+        cursor.execute(
+            f"DELETE FROM {DATABASE}.{SCHEMA}.RAW_PITCHES WHERE game_date = '{game_date}'"
         )
+        conn.commit()
+        cursor.close()
+        log.info(f"Cleared existing pitches for {game_date}")
+
+        _bulk_insert_snowflake(conn, df, "RAW_PITCHES")
         log.info(f"Loaded {len(df)} pitch rows for {game_date}")
     finally:
         conn.close()
