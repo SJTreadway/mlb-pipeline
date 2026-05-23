@@ -13,8 +13,8 @@ on:
           - 'false'
   schedule:
     - cron: '0 12 * * *'   # 7am CT (first run, always refresh)
-    - cron: '0 14 * * *'   # 9am CT
-    - cron: '0 16 * * *'   # 11pm CT
+    - cron: '0 15 * * *'   # 10am CT
+    - cron: '0 17 * * *'   # 12pm CT
     - cron: '0 21 * * *'   # 4pm CT
     - cron: '0 23 * * *'   # 6pm CT
 
