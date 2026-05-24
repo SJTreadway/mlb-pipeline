@@ -147,22 +147,32 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
 
     cursor = conn.cursor()
     cols = df.columns.tolist()
-    placeholders = ", ".join(["%s"] * len(cols))
-    col_str = ", ".join(cols)
-    where = " AND ".join([f"{c} = %s" for c in unique_cols])
     unique_vals = df[unique_cols].drop_duplicates()
 
-    if len(unique_cols) == 1:
+    # ── fast path: mlbam_id + game_date composite key ─────────────────────────
+    # One DELETE per date instead of one DELETE per row
+    if set(unique_cols) == {"mlbam_id", "game_date", "game_pk"}:
+        id_list = ",".join(str(i) for i in df["mlbam_id"].unique())
+        date_val = df["game_date"].iloc[0]
+        cursor.execute(
+            f"DELETE FROM {DATABASE}.{SCHEMA}.{table} "
+            f"WHERE mlbam_id IN ({id_list}) AND game_date = '{date_val}'"
+        )
+    elif len(unique_cols) == 1:
         ids = tuple(unique_vals[unique_cols[0]].tolist())
         cursor.execute(
-            f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {unique_cols[0]} IN ({','.join(['%s']*len(ids))})",
+            f"DELETE FROM {DATABASE}.{SCHEMA}.{table} "
+            f"WHERE {unique_cols[0]} IN ({','.join(['%s']*len(ids))})",
             ids,
         )
     else:
+        where = " AND ".join([f"{c} = %s" for c in unique_cols])
         delete_sql = f"DELETE FROM {DATABASE}.{SCHEMA}.{table} WHERE {where}"
         delete_data = [tuple(row) for row in unique_vals.itertuples(index=False)]
         cursor.executemany(delete_sql, delete_data)
 
+    placeholders = ", ".join(["%s"] * len(cols))
+    col_str = ", ".join(cols)
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
     chunk_size = 1000
@@ -182,21 +192,16 @@ def _bulk_insert_snowflake(conn, df, table):
     if df.empty:
         return
 
-    # Convert timestamp/datetime columns to strings — Snowflake connector
-    # does not support pandas Timestamp binding via executemany
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime("%Y-%m-%d %H:%M:%S")
         elif df[col].dtype == object:
-            # catch any Timestamp objects stored as object dtype
             df[col] = df[col].apply(
                 lambda v: (
                     v.strftime("%Y-%m-%d %H:%M:%S") if hasattr(v, "strftime") else v
                 )
             )
 
-    # Convert pandas nullable dtypes (Int64, boolean, StringDtype) to numpy
-    # equivalents — Snowflake connector doesn't support pd.NA (natype)
     df = df.convert_dtypes(convert_string=False).fillna(value=pd.NA)
     for col in df.columns:
         if hasattr(df[col], "dtype") and hasattr(df[col].dtype, "numpy_dtype"):
@@ -204,7 +209,6 @@ def _bulk_insert_snowflake(conn, df, table):
                 df[col] = df[col].astype(df[col].dtype.numpy_dtype)
             except Exception:
                 df[col] = df[col].astype(object)
-    # Replace remaining pd.NA with None for Snowflake compatibility
     df = df.where(pd.notnull(df), None)
 
     cursor = conn.cursor()
@@ -356,9 +360,7 @@ def _transform_batter_game(df):
 
 
 def _transform_pitcher_game(df):
-    """Pitch-level Statcast → one row per pitcher-game.
-    Includes H, BB, SO, ER, X2B, X3B for WHIP / SO% / ERA / FIP computation.
-    """
+    """Pitch-level Statcast → one row per pitcher-game."""
     if df.empty:
         return pd.DataFrame()
 
@@ -402,7 +404,7 @@ def _transform_pitcher_game(df):
         bb = len(pa[pa["events"].isin(["walk", "intent_walk"])])
         so = len(pa[pa["events"] == "strikeout"])
         r = int(pa["runs_scored"].sum())
-        er = r  # ER ≈ R
+        er = r
 
         batted = pa[pa["launch_speed"].notna()].copy()
         n_batted = len(batted)
@@ -590,21 +592,138 @@ def update_game_results() -> int:
     return len(rows)
 
 
+def fetch_and_load_pitch_stats(player_info: dict) -> int:
+    """Pull raw pitch-level Statcast data for date → Snowflake RAW_PITCHES."""
+    game_date = player_info["date"]
+    log.info(f"Fetching raw pitches for {game_date} …")
+
+    try:
+        df = statcast(start_dt=game_date, end_dt=game_date)
+    except Exception as e:
+        log.warning(f"Error fetching pitches for {game_date}: {e}")
+        return 0
+
+    if df is None or df.empty:
+        log.info(f"No pitch data for {game_date}")
+        return 0
+
+    df["_source"] = "pybaseball"
+
+    conn = _get_snowflake_conn()
+    try:
+        # One DELETE by date instead of ~4,000 individual row deletes
+        cursor = conn.cursor()
+        cursor.execute(
+            f"DELETE FROM {DATABASE}.{SCHEMA}.RAW_PITCHES WHERE game_date = '{game_date}'"
+        )
+        conn.commit()
+        cursor.close()
+        log.info(f"Cleared existing pitches for {game_date}")
+        _bulk_insert_snowflake(conn, df, "RAW_PITCHES")
+        log.info(f"Loaded {len(df)} pitch rows for {game_date}")
+    finally:
+        conn.close()
+    return len(df)
+
+
+def update_bvp_history() -> int:
+    """Refresh BVP_HISTORY from PITCHES view for yesterday's games."""
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    conn = _get_snowflake_conn()
+    cursor = conn.cursor()
+
+    merge_sql = f"""
+        MERGE INTO {DATABASE}.{SCHEMA}.BVP_HISTORY tgt
+        USING (
+            WITH pa_level AS (
+                SELECT
+                    batter, pitcher, game_date, game_pk,
+                    CASE WHEN events = 'home_run' THEN 1 ELSE 0 END AS is_hr,
+                    1 AS is_pa
+                FROM {DATABASE}.{SCHEMA}.PITCHES
+                WHERE game_date = '{yesterday}'
+                  AND events IS NOT NULL AND events != ''
+            ),
+            pa_by_game AS (
+                SELECT batter, pitcher, game_date, game_pk,
+                       SUM(is_pa) AS pa, SUM(is_hr) AS hr
+                FROM pa_level
+                GROUP BY batter, pitcher, game_date, game_pk
+            ),
+            -- Most recent cumulative row per batter-pitcher instead of full scan
+            prior AS (
+                SELECT batter, pitcher, bvp_pa_prior, bvp_hr_prior
+                FROM (
+                    SELECT batter, pitcher, bvp_pa_prior, bvp_hr_prior,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY batter, pitcher
+                               ORDER BY game_date DESC, game_pk DESC
+                           ) AS rn
+                    FROM {DATABASE}.{SCHEMA}.BVP_HISTORY
+                )
+                WHERE rn = 1
+            )
+            SELECT
+                p.batter, p.pitcher, p.game_date, p.game_pk,
+                p.pa, p.hr,
+                COALESCE(pr.bvp_pa_prior, 0) + p.pa AS bvp_pa_prior,
+                COALESCE(pr.bvp_hr_prior, 0) + p.hr AS bvp_hr_prior
+            FROM pa_by_game p
+            LEFT JOIN prior pr
+                ON p.batter  = pr.batter
+               AND p.pitcher = pr.pitcher
+        ) src
+        ON  tgt.batter  = src.batter
+        AND tgt.pitcher = src.pitcher
+        AND tgt.game_pk = src.game_pk
+        WHEN NOT MATCHED THEN INSERT
+            (batter, pitcher, game_date, game_pk, pa, hr, bvp_pa_prior, bvp_hr_prior)
+        VALUES
+            (src.batter, src.pitcher, src.game_date, src.game_pk,
+             src.pa, src.hr, src.bvp_pa_prior, src.bvp_hr_prior)
+    """
+
+    try:
+        cursor.execute(merge_sql)
+        rows = cursor.rowcount
+        conn.commit()
+        log.info(f"BVP_HISTORY updated — {rows} rows merged for {yesterday}")
+    finally:
+        cursor.close()
+        conn.close()
+    return rows
+
+
 def compute_rolling_features(
     batter_ids: list,
     pitcher_ids: list,
     game_date: str = None,
     year: int = None,
     pitcher_only: bool = False,
+    allow_full_recompute: bool = False,
 ) -> str:
-    """Recompute rolling features from raw tables → feature tables."""
+    """Recompute rolling features from raw tables → feature tables.
+
+    allow_full_recompute must be explicitly True to run a full table recompute.
+    This prevents an accidental expensive fallthrough during the daily pipeline
+    when batter_ids/pitcher_ids are empty (e.g. lineups not confirmed yet).
+    """
+    # ── safety guard ──────────────────────────────────────────────────────────
+    if not batter_ids and not pitcher_ids and not year and not allow_full_recompute:
+        log.warning(
+            "compute_rolling_features: no player IDs, no year, and "
+            "allow_full_recompute=False — skipping to avoid full table recompute"
+        )
+        return "skipped"
+
     conn = _get_snowflake_conn()
     cursor = conn.cursor()
 
     # ── build WHERE clauses ───────────────────────────────────────────────────
-    if batter_ids and pitcher_ids:
-        b_ids = ",".join(str(i) for i in batter_ids)
-        p_ids = ",".join(str(i) for i in pitcher_ids)
+    if batter_ids or pitcher_ids:
+        # Use OR so a partial list (e.g. only batters) still takes the fast path
+        b_ids = ",".join(str(i) for i in batter_ids) if batter_ids else "NULL"
+        p_ids = ",".join(str(i) for i in pitcher_ids) if pitcher_ids else "NULL"
         batter_where = f"""WHERE mlbam_id IN ({b_ids})
             AND game_date >= DATEADD(day, -365, '{game_date}')
             ORDER BY mlbam_id, game_date"""
@@ -749,7 +868,7 @@ def compute_rolling_features(
             batter_features = batter_features.sort_values(
                 ["mlbam_id", "game_date"]
             ).reset_index(drop=True)
-            if batter_ids and pitcher_ids:
+            if batter_ids or pitcher_ids:
                 batter_features = (
                     batter_features.groupby("mlbam_id").last().reset_index()
                 )
@@ -780,10 +899,11 @@ def compute_rolling_features(
         new_cols = {}
         for w in WINDOWS_PITCH:
             for col in pitch_stat_cols:
-                if col in df.columns:
-                    new_cols[f"rollsum_{col}_{w}"] = _rolling_sum(df, col, w).values
-                else:
-                    new_cols[f"rollsum_{col}_{w}"] = np.zeros(len(df))
+                new_cols[f"rollsum_{col}_{w}"] = (
+                    _rolling_sum(df, col, w).values
+                    if col in df.columns
+                    else np.zeros(len(df))
+                )
 
         new_df = pd.DataFrame(new_cols, index=df.index)
         df = pd.concat([df, new_df], axis=1)
@@ -841,7 +961,7 @@ def compute_rolling_features(
         pitcher_features = pitcher_features.sort_values(
             ["mlbam_id", "game_date"]
         ).reset_index(drop=True)
-        if batter_ids and pitcher_ids:
+        if batter_ids or pitcher_ids:
             pitcher_features = pitcher_features.groupby("mlbam_id").last().reset_index()
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
         t = time.time()
@@ -852,113 +972,6 @@ def compute_rolling_features(
     conn.close()
     log.info("Rolling features complete")
     return "success"
-
-
-def fetch_and_load_pitch_stats(player_info: dict) -> int:
-    game_date = player_info["date"]
-    log.info(f"Fetching raw pitches for {game_date} …")
-
-    try:
-        df = statcast(start_dt=game_date, end_dt=game_date)
-    except Exception as e:
-        log.warning(f"Error fetching pitches for {game_date}: {e}")
-        return 0
-
-    if df is None or df.empty:
-        log.info(f"No pitch data for {game_date}")
-        return 0
-
-    df["_source"] = "pybaseball"
-
-    conn = _get_snowflake_conn()
-    try:
-        # One DELETE by date instead of ~4,000 individual row deletes
-        cursor = conn.cursor()
-        cursor.execute(
-            f"DELETE FROM {DATABASE}.{SCHEMA}.RAW_PITCHES WHERE game_date = '{game_date}'"
-        )
-        conn.commit()
-        cursor.close()
-        log.info(f"Cleared existing pitches for {game_date}")
-
-        _bulk_insert_snowflake(conn, df, "RAW_PITCHES")
-        log.info(f"Loaded {len(df)} pitch rows for {game_date}")
-    finally:
-        conn.close()
-    return len(df)
-
-
-def update_bvp_history() -> int:
-    """Refresh BVP_HISTORY from PITCHES view for yesterday's games.
-
-    Reads from the deduplicated PITCHES view (not RAW_PITCHES directly)
-    and merges new PA-level BvP data into BVP_HISTORY.
-    """
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-    conn = _get_snowflake_conn()
-    cursor = conn.cursor()
-
-    merge_sql = f"""
-        MERGE INTO {DATABASE}.{SCHEMA}.BVP_HISTORY tgt
-        USING (
-            WITH pa_level AS (
-                SELECT
-                    batter, pitcher, game_date, game_pk,
-                    CASE WHEN events = 'home_run' THEN 1 ELSE 0 END AS is_hr,
-                    1 AS is_pa
-                FROM {DATABASE}.{SCHEMA}.PITCHES
-                WHERE game_date = '{yesterday}'
-                AND events IS NOT NULL AND events != ''
-            ),
-            pa_by_game AS (
-                SELECT batter, pitcher, game_date, game_pk,
-                    SUM(is_pa) AS pa, SUM(is_hr) AS hr
-                FROM pa_level
-                GROUP BY batter, pitcher, game_date, game_pk
-            ),
-            -- Look up the single most recent cumulative row per batter-pitcher
-            -- instead of summing all history
-            prior AS (
-                SELECT batter, pitcher, bvp_pa_prior, bvp_hr_prior
-                FROM (
-                    SELECT batter, pitcher, bvp_pa_prior, bvp_hr_prior,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY batter, pitcher
-                            ORDER BY game_date DESC, game_pk DESC
-                        ) AS rn
-                    FROM {DATABASE}.{SCHEMA}.BVP_HISTORY
-                )
-                WHERE rn = 1
-            )
-            SELECT
-                p.batter, p.pitcher, p.game_date, p.game_pk,
-                p.pa, p.hr,
-                COALESCE(pr.bvp_pa_prior, 0) + p.pa AS bvp_pa_prior,
-                COALESCE(pr.bvp_hr_prior, 0) + p.hr AS bvp_hr_prior
-            FROM pa_by_game p
-            LEFT JOIN prior pr
-                ON p.batter  = pr.batter
-            AND p.pitcher = pr.pitcher
-        ) src
-        ON  tgt.batter  = src.batter
-        AND tgt.pitcher = src.pitcher
-        AND tgt.game_pk = src.game_pk
-        WHEN NOT MATCHED THEN INSERT
-            (batter, pitcher, game_date, game_pk, pa, hr, bvp_pa_prior, bvp_hr_prior)
-        VALUES
-            (src.batter, src.pitcher, src.game_date, src.game_pk,
-            src.pa, src.hr, src.bvp_pa_prior, src.bvp_hr_prior)
-    """
-
-    try:
-        cursor.execute(merge_sql)
-        rows = cursor.rowcount
-        conn.commit()
-        log.info(f"BVP_HISTORY updated — {rows} rows merged for {yesterday}")
-    finally:
-        cursor.close()
-        conn.close()
-    return rows
 
 
 def get_todays_lineup_players() -> dict:
