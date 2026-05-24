@@ -908,30 +908,37 @@ def update_bvp_history() -> int:
                     1 AS is_pa
                 FROM {DATABASE}.{SCHEMA}.PITCHES
                 WHERE game_date = '{yesterday}'
-                  AND events IS NOT NULL AND events != ''
+                AND events IS NOT NULL AND events != ''
             ),
             pa_by_game AS (
                 SELECT batter, pitcher, game_date, game_pk,
-                       SUM(is_pa) AS pa, SUM(is_hr) AS hr
+                    SUM(is_pa) AS pa, SUM(is_hr) AS hr
                 FROM pa_level
                 GROUP BY batter, pitcher, game_date, game_pk
             ),
+            -- Look up the single most recent cumulative row per batter-pitcher
+            -- instead of summing all history
             prior AS (
-                SELECT batter, pitcher,
-                       SUM(bvp_pa_prior) + SUM(pa) AS bvp_pa_prior,
-                       SUM(bvp_hr_prior) + SUM(hr)  AS bvp_hr_prior
-                FROM {DATABASE}.{SCHEMA}.BVP_HISTORY
-                GROUP BY batter, pitcher
+                SELECT batter, pitcher, bvp_pa_prior, bvp_hr_prior
+                FROM (
+                    SELECT batter, pitcher, bvp_pa_prior, bvp_hr_prior,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY batter, pitcher
+                            ORDER BY game_date DESC, game_pk DESC
+                        ) AS rn
+                    FROM {DATABASE}.{SCHEMA}.BVP_HISTORY
+                )
+                WHERE rn = 1
             )
             SELECT
                 p.batter, p.pitcher, p.game_date, p.game_pk,
                 p.pa, p.hr,
-                COALESCE(pr.bvp_pa_prior, 0) AS bvp_pa_prior,
-                COALESCE(pr.bvp_hr_prior, 0) AS bvp_hr_prior
+                COALESCE(pr.bvp_pa_prior, 0) + p.pa AS bvp_pa_prior,
+                COALESCE(pr.bvp_hr_prior, 0) + p.hr AS bvp_hr_prior
             FROM pa_by_game p
             LEFT JOIN prior pr
                 ON p.batter  = pr.batter
-               AND p.pitcher = pr.pitcher
+            AND p.pitcher = pr.pitcher
         ) src
         ON  tgt.batter  = src.batter
         AND tgt.pitcher = src.pitcher
@@ -940,7 +947,7 @@ def update_bvp_history() -> int:
             (batter, pitcher, game_date, game_pk, pa, hr, bvp_pa_prior, bvp_hr_prior)
         VALUES
             (src.batter, src.pitcher, src.game_date, src.game_pk,
-             src.pa, src.hr, src.bvp_pa_prior, src.bvp_hr_prior)
+            src.pa, src.hr, src.bvp_pa_prior, src.bvp_hr_prior)
     """
 
     try:
