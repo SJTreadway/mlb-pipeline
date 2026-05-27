@@ -32,17 +32,14 @@ jobs:
         id: refresh
         run: |
           INPUT="${{ github.event.inputs.refresh_data }}"
+          SCHEDULE="${{ github.event.schedule }}"
           if [ -n "$INPUT" ]; then
             echo "refresh=$INPUT" >> $GITHUB_OUTPUT
+          elif [ "$SCHEDULE" = "0 12 * * *" ]; then
+            echo "refresh=true" >> $GITHUB_OUTPUT
           else
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" -eq 12 ]; then
-              echo "refresh=true" >> $GITHUB_OUTPUT
-            else
-              echo "refresh=false" >> $GITHUB_OUTPUT
-            fi
+            echo "refresh=false" >> $GITHUB_OUTPUT
           fi
-
       - name: Run daily statcast ingestion
         run: python3.11 jobs/daily_statcast_ingest.py
         env:
