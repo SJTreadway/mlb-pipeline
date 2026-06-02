@@ -153,10 +153,10 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     # One DELETE per date instead of one DELETE per row
     if set(unique_cols) == {"mlbam_id", "game_date", "game_pk"}:
         id_list = ",".join(str(i) for i in df["mlbam_id"].unique())
-        date_val = df["game_date"].iloc[0]
+        date_list = "', '".join(df["game_date"].unique())
         cursor.execute(
             f"DELETE FROM {DATABASE}.{SCHEMA}.{table} "
-            f"WHERE mlbam_id IN ({id_list}) AND game_date = '{date_val}'"
+            f"WHERE mlbam_id IN ({id_list}) AND game_date IN ('{date_list}')"
         )
     elif len(unique_cols) == 1:
         ids = tuple(unique_vals[unique_cols[0]].tolist())
@@ -176,10 +176,17 @@ def _upsert_to_snowflake(conn, df, table, unique_cols):
     sql = f"INSERT INTO {DATABASE}.{SCHEMA}.{table} ({col_str}) VALUES ({placeholders})"
     data = [tuple(row) for row in df.itertuples(index=False)]
     chunk_size = 1000
-    for i in range(0, len(data), chunk_size):
-        cursor.executemany(sql, data[i : i + chunk_size])
-        log.info(f"Inserted chunk {i//chunk_size + 1}/{(len(data)-1)//chunk_size + 1}")
-    conn.commit()
+    try:
+        for i in range(0, len(data), chunk_size):
+            cursor.executemany(sql, data[i : i + chunk_size])
+            log.info(
+                f"Inserted chunk {i//chunk_size + 1}/{(len(data)-1)//chunk_size + 1}"
+            )
+        conn.commit()
+    except Exception as e:
+        log.error(f"Insert failed for {table}: {e}")
+        conn.rollback()
+        raise
     cursor.close()
 
 
