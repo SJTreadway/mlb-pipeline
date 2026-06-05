@@ -23,31 +23,46 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: python3.11 -m pip install -r requirements.txt
+    - name: Cache virtualenv
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-venv-
 
-      - name: Set refresh flag
-        id: refresh
-        run: |
-          INPUT="${{ github.event.inputs.refresh_data }}"
-          SCHEDULE="${{ github.event.schedule }}"
-          if [ -n "$INPUT" ]; then
-            echo "refresh=$INPUT" >> $GITHUB_OUTPUT
-          elif [ "$SCHEDULE" = "0 12 * * *" ]; then
-            echo "refresh=true" >> $GITHUB_OUTPUT
-          else
-            echo "refresh=false" >> $GITHUB_OUTPUT
-          fi
-      - name: Run daily statcast ingestion
-        run: python3.11 jobs/daily_statcast_ingest.py
-        env:
-          REFRESH_DATA:           ${{ steps.refresh.outputs.refresh }}
-          SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
-          SNOWFLAKE_DATABASE:     ${{ secrets.SNOWFLAKE_DATABASE }}
-          SNOWFLAKE_WAREHOUSE:    ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-          SNOWFLAKE_ROLE:         ${{ secrets.SNOWFLAKE_ROLE }}
-          YEAR:                   2026
+    - name: Install dependencies
+      run: |
+        python3.11 -m venv .venv
+        .venv/bin/pip install -r requirements.txt
+
+    - name: Set refresh flag
+      id: refresh
+      run: |
+        INPUT="${{ github.event.inputs.refresh_data }}"
+        SCHEDULE="${{ github.event.schedule }}"
+        if [ -n "$INPUT" ]; then
+          echo "refresh=$INPUT" >> $GITHUB_OUTPUT
+        elif [ "$SCHEDULE" = "0 12 * * *" ]; then
+          echo "refresh=true" >> $GITHUB_OUTPUT
+        else
+          echo "refresh=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Run daily statcast ingestion
+      run: .venv/bin/python jobs/daily_statcast_ingest.py
+      env:
+        REFRESH_DATA:           ${{ steps.refresh.outputs.refresh }}
+        SNOWFLAKE_ACCOUNT:      ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        SNOWFLAKE_USER:         ${{ secrets.SNOWFLAKE_USER }}
+        SNOWFLAKE_PRIVATE_KEY:  ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        SNOWFLAKE_DATABASE:     ${{ secrets.SNOWFLAKE_DATABASE }}
+        SNOWFLAKE_WAREHOUSE:    ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+        SNOWFLAKE_ROLE:         ${{ secrets.SNOWFLAKE_ROLE }}
+        YEAR:                   2026
+
+    - name: Cleanup
+      if: always()
+      run: rm -f /tmp/*.csv /tmp/*.pkl /tmp/*.parquet /tmp/*.json
