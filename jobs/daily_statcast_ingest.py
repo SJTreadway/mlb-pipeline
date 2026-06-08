@@ -13,6 +13,7 @@ from jobs.statcast_pipeline import (
     fetch_and_load_pitch_stats,
     update_bvp_history,
     compute_rolling_features,
+    get_recent_reliever_ids,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -47,10 +48,15 @@ if __name__ == "__main__":
 
     # only compute rolling features for today's confirmed lineup players
     todays_players = get_todays_lineup_players()
+    recent_relievers = get_recent_reliever_ids(days=7)
+    all_pitcher_ids = list(set(todays_players["pitcher_ids"] + recent_relievers))
+    log.info(
+        f"Total pitchers for rolling features: {len(all_pitcher_ids)} ({len(recent_relievers)} relievers added)"
+    )
     if todays_players["batter_ids"] or todays_players["pitcher_ids"]:
         compute_rolling_features(
             batter_ids=todays_players["batter_ids"],
-            pitcher_ids=todays_players["pitcher_ids"],
+            pitcher_ids=all_pitcher_ids,
             game_date=player_info["date"],
         )
     else:

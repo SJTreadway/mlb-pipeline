@@ -560,6 +560,30 @@ def fetch_and_load_pitcher_stats(player_info: dict) -> int:
     return total
 
 
+def get_recent_reliever_ids(days: int = 7) -> list:
+    """Get pitcher IDs for relievers who appeared in the last N days."""
+    conn = _get_snowflake_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"""
+            SELECT DISTINCT mlbam_id
+            FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES
+            WHERE game_date >= DATEADD(day, -{days}, CURRENT_DATE)
+            AND gs = 0
+        """
+        )
+        ids = [row[0] for row in cursor.fetchall()]
+        log.info(f"Found {len(ids)} relievers from last {days} days")
+        return ids
+    except Exception as e:
+        log.warning(f"Error fetching recent reliever IDs: {e}")
+        return []
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def update_game_results() -> int:
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     conn = _get_snowflake_conn()
@@ -732,10 +756,10 @@ def compute_rolling_features(
         b_ids = ",".join(str(i) for i in batter_ids) if batter_ids else "NULL"
         p_ids = ",".join(str(i) for i in pitcher_ids) if pitcher_ids else "NULL"
         batter_where = f"""WHERE mlbam_id IN ({b_ids})
-            AND game_date >= DATEADD(day, -365, '{game_date}')
+            AND game_date >= DATEADD(day, -400, '{game_date}')
             ORDER BY mlbam_id, game_date"""
         pitcher_where = f"""WHERE mlbam_id IN ({p_ids})
-            AND game_date >= DATEADD(day, -365, '{game_date}')
+            AND game_date >= DATEADD(day, -400, '{game_date}')
             ORDER BY mlbam_id, game_date"""
         insert_fn = lambda conn, df, table: _upsert_to_snowflake(
             conn, df, table, ["mlbam_id", "game_date", "game_pk"]
@@ -744,12 +768,12 @@ def compute_rolling_features(
         batter_where = f"""WHERE mlbam_id IN (
               SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES
               WHERE game_date = '{game_date}'
-          ) AND game_date >= DATEADD(day, -365, '{game_date}')
+          ) AND game_date >= DATEADD(day, -400, '{game_date}')
           ORDER BY mlbam_id, game_date"""
         pitcher_where = f"""WHERE mlbam_id IN (
               SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES
               WHERE game_date = '{game_date}'
-          ) AND game_date >= DATEADD(day, -365, '{game_date}')
+          ) AND game_date >= DATEADD(day, -400, '{game_date}')
           ORDER BY mlbam_id, game_date"""
         insert_fn = lambda conn, df, table: _upsert_to_snowflake(
             conn, df, table, ["mlbam_id", "game_date", "game_pk"]
