@@ -30,6 +30,19 @@ NON_AB_EVENTS = [
 WINDOWS_BAT = [7, 14, 30, 75, 162, 350]
 WINDOWS_PITCH = [10, 35, 75]
 
+# How far back (in days) to pull raw game rows when computing rolling
+# features for a batch of players. Must be >= the longest rolling window
+# (350 games for batters) translated into a safe calendar-day equivalent —
+# NOT simply equal to the longest window in GAMES, since games-per-day
+# varies (off-days, doubleheaders). 365 days (one full season-equivalent,
+# plus slack for a 162-game season spread across ~186 calendar days) safely
+# covers WINDOWS_BAT's max of 350 GAMES for any real player, since no
+# player accumulates 350 games in fewer than ~365 calendar days even in a
+# theoretical every-day-a-doubleheader scenario for actual MLB schedules.
+# Reduced from 400 -> 365 to cut redundant raw-row fetch/compute volume on
+# every incremental run while keeping a safety margin above the actual need.
+ROLLING_LOOKBACK_DAYS = 365
+
 # Pitcher smoothing defaults (mirror pitchers.py)
 IP_PER_GAME_DEF = 3
 BF_PER_GAME_DEF = 12
@@ -756,10 +769,10 @@ def compute_rolling_features(
         b_ids = ",".join(str(i) for i in batter_ids) if batter_ids else "NULL"
         p_ids = ",".join(str(i) for i in pitcher_ids) if pitcher_ids else "NULL"
         batter_where = f"""WHERE mlbam_id IN ({b_ids})
-            AND game_date >= DATEADD(day, -400, '{game_date}')
+            AND game_date >= DATEADD(day, -{ROLLING_LOOKBACK_DAYS}, '{game_date}')
             ORDER BY mlbam_id, game_date"""
         pitcher_where = f"""WHERE mlbam_id IN ({p_ids})
-            AND game_date >= DATEADD(day, -400, '{game_date}')
+            AND game_date >= DATEADD(day, -{ROLLING_LOOKBACK_DAYS}, '{game_date}')
             ORDER BY mlbam_id, game_date"""
         insert_fn = lambda conn, df, table: _upsert_to_snowflake(
             conn, df, table, ["mlbam_id", "game_date", "game_pk"]
@@ -768,12 +781,12 @@ def compute_rolling_features(
         batter_where = f"""WHERE mlbam_id IN (
               SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_BATTER_GAMES
               WHERE game_date = '{game_date}'
-          ) AND game_date >= DATEADD(day, -400, '{game_date}')
+          ) AND game_date >= DATEADD(day, -{ROLLING_LOOKBACK_DAYS}, '{game_date}')
           ORDER BY mlbam_id, game_date"""
         pitcher_where = f"""WHERE mlbam_id IN (
               SELECT DISTINCT mlbam_id FROM {DATABASE}.{SCHEMA}.RAW_PITCHER_GAMES
               WHERE game_date = '{game_date}'
-          ) AND game_date >= DATEADD(day, -400, '{game_date}')
+          ) AND game_date >= DATEADD(day, -{ROLLING_LOOKBACK_DAYS}, '{game_date}')
           ORDER BY mlbam_id, game_date"""
         insert_fn = lambda conn, df, table: _upsert_to_snowflake(
             conn, df, table, ["mlbam_id", "game_date", "game_pk"]
