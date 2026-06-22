@@ -1,3 +1,4 @@
+import hashlib
 import os
 import time
 import logging
@@ -738,6 +739,154 @@ def update_bvp_history() -> int:
     return rows
 
 
+# ── Checkpoint helpers ────────────────────────────────────────────────────────
+
+
+def _lineup_hash(batter_ids: list, pitcher_ids: list) -> str:
+    """Stable hash of a game's confirmed roster. Changes if a player is scratched."""
+    combined = sorted(map(str, batter_ids + pitcher_ids))
+    return hashlib.md5("|".join(combined).encode()).hexdigest()
+
+
+def _get_uncomputed_games(conn, confirmed_games: list[dict]) -> list[dict]:
+    """
+    confirmed_games: [{"game_pk": int, "batter_ids": [...], "pitcher_ids": [...]}]
+    Returns only games whose lineup hash differs from the last stored run,
+    meaning they need rolling features recomputed.
+    """
+    if not confirmed_games:
+        return []
+
+    game_pks = tuple(g["game_pk"] for g in confirmed_games)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"""
+        SELECT game_pk, lineup_hash
+        FROM {DATABASE}.{SCHEMA}.FEATURE_RUN_CHECKPOINTS
+        WHERE game_pk IN ({','.join(['%s'] * len(game_pks))})
+        """,
+        game_pks,
+    )
+    stored = {row[0]: row[1] for row in cursor.fetchall()}
+    cursor.close()
+
+    to_recompute = []
+    for game in confirmed_games:
+        current_hash = _lineup_hash(game["batter_ids"], game["pitcher_ids"])
+        if stored.get(game["game_pk"]) != current_hash:
+            to_recompute.append({**game, "lineup_hash": current_hash})
+
+    skipped = len(confirmed_games) - len(to_recompute)
+    log.info(
+        f"Checkpoint: {len(to_recompute)} games need recompute, {skipped} already current"
+    )
+    return to_recompute
+
+
+def _checkpoint_games(conn, computed_games: list[dict], game_date: str):
+    """Upsert a checkpoint row for each successfully computed game."""
+    if not computed_games:
+        return
+    cursor = conn.cursor()
+    for game in computed_games:
+        cursor.execute(
+            f"""
+            MERGE INTO {DATABASE}.{SCHEMA}.FEATURE_RUN_CHECKPOINTS t
+            USING (SELECT %s AS game_pk) s ON t.game_pk = s.game_pk
+            WHEN MATCHED THEN UPDATE SET
+                lineup_hash = %s,
+                game_date   = %s,
+                computed_at = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT
+                (game_pk, lineup_hash, game_date, computed_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP())
+            """,
+            (
+                game["game_pk"], game["lineup_hash"], game_date,
+                game["game_pk"], game["lineup_hash"], game_date,
+            ),
+        )
+    conn.commit()
+    cursor.close()
+    log.info(f"Checkpointed {len(computed_games)} games for {game_date}")
+
+
+# ── Lineup fetch ──────────────────────────────────────────────────────────────
+
+
+def get_todays_lineup_players() -> dict:
+    """
+    Hit the MLB API for today's confirmed lineups.
+
+    Returns per-game roster lists (for checkpoint comparison) as well as
+    flat batter_ids / pitcher_ids sets for callers that just need the union.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    resp = requests.get(
+        f"{MLB_API}/schedule",
+        params={"sportId": 1, "date": today, "hydrate": "lineups,probablePitcher"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    games = resp.json().get("dates", [{}])[0].get("games", [])
+
+    confirmed_games = []
+    all_batter_ids: set = set()
+    all_pitcher_ids: set = set()
+
+    for game in games:
+        lineups = game.get("lineups", {})
+        # Skip games where the lineup hasn't been posted yet
+        if not lineups.get("homePlayers") and not lineups.get("awayPlayers"):
+            continue
+
+        game_pk = game["gamePk"]
+        batter_ids: set = set()
+        pitcher_ids: set = set()
+
+        for side in ["homePlayers", "awayPlayers"]:
+            for player in lineups.get(side, []):
+                pid = player.get("id")
+                pos = player.get("primaryPosition", {}).get("abbreviation", "")
+                if not pid:
+                    continue
+                if pos == "P":
+                    pitcher_ids.add(pid)
+                else:
+                    batter_ids.add(pid)
+
+        # Always include probable pitchers even if full lineup not yet posted
+        for side in ["home", "away"]:
+            pitcher = game.get("teams", {}).get(side, {}).get("probablePitcher", {})
+            pid = pitcher.get("id")
+            if pid:
+                pitcher_ids.add(pid)
+
+        confirmed_games.append(
+            {
+                "game_pk": game_pk,
+                "batter_ids": list(batter_ids),
+                "pitcher_ids": list(pitcher_ids),
+            }
+        )
+        all_batter_ids.update(batter_ids)
+        all_pitcher_ids.update(pitcher_ids)
+
+    log.info(
+        f"Today ({today}): {len(confirmed_games)} confirmed games, "
+        f"{len(all_batter_ids)} batters, {len(all_pitcher_ids)} pitchers"
+    )
+    return {
+        "date": today,
+        "confirmed_games": confirmed_games,
+        "batter_ids": list(all_batter_ids),
+        "pitcher_ids": list(all_pitcher_ids),
+    }
+
+
+# ── Rolling features ──────────────────────────────────────────────────────────
+
+
 def compute_rolling_features(
     batter_ids: list,
     pitcher_ids: list,
@@ -1022,36 +1171,53 @@ def compute_rolling_features(
     return "success"
 
 
-def get_todays_lineup_players() -> dict:
-    """Get batter and pitcher IDs from today's confirmed lineups."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    resp = requests.get(
-        f"{MLB_API}/schedule",
-        params={"sportId": 1, "date": today, "hydrate": "lineups,probablePitcher"},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    games = resp.json().get("dates", [{}])[0].get("games", [])
-    batter_ids = set()
-    pitcher_ids = set()
+# ── Daily ingest entry point ──────────────────────────────────────────────────
 
-    for game in games:
-        lineups = game.get("lineups", {})
-        for side in ["homePlayers", "awayPlayers"]:
-            for player in lineups.get(side, []):
-                pid = player.get("id")
-                pos = player.get("primaryPosition", {}).get("abbreviation", "")
-                if not pid:
-                    continue
-                if pos == "P":
-                    pitcher_ids.add(pid)
-                else:
-                    batter_ids.add(pid)
-        for side in ["home", "away"]:
-            pitcher = game.get("teams", {}).get(side, {}).get("probablePitcher", {})
-            pid = pitcher.get("id")
-            if pid:
-                pitcher_ids.add(pid)
 
-    log.info(f"Today's lineup: {len(batter_ids)} batters, {len(pitcher_ids)} pitchers")
-    return {"batter_ids": list(batter_ids), "pitcher_ids": list(pitcher_ids)}
+def run_daily_ingest():
+    """
+    Main entry point for the 4x/day scheduled runs.
+
+    Flow:
+      1. Hit MLB API for today's confirmed lineups (per game).
+      2. Compare each game's roster hash against FEATURE_RUN_CHECKPOINTS.
+      3. Only compute rolling features for games that are new or whose
+         lineup changed (late scratch, etc.).
+      4. Checkpoint successfully computed games so the next run skips them.
+    """
+    today_data = get_todays_lineup_players()
+    confirmed_games = today_data["confirmed_games"]
+    game_date = today_data["date"]
+
+    if not confirmed_games:
+        log.info("No confirmed lineups yet — skipping feature compute")
+        return
+
+    conn = _get_snowflake_conn()
+    try:
+        games_to_run = _get_uncomputed_games(conn, confirmed_games)
+        if not games_to_run:
+            log.info("All confirmed games already current — nothing to recompute")
+            return
+
+        # Flatten to unique player IDs across only the games that need recompute
+        batter_ids = list({pid for g in games_to_run for pid in g["batter_ids"]})
+        pitcher_ids = list({pid for g in games_to_run for pid in g["pitcher_ids"]})
+
+        log.info(
+            f"Recomputing features for {len(games_to_run)} games "
+            f"({len(batter_ids)} batters, {len(pitcher_ids)} pitchers)"
+        )
+
+        result = compute_rolling_features(
+            batter_ids=batter_ids,
+            pitcher_ids=pitcher_ids,
+            game_date=game_date,
+        )
+
+        if result == "success":
+            _checkpoint_games(conn, games_to_run, game_date)
+        else:
+            log.warning(f"compute_rolling_features returned '{result}' — not checkpointing")
+    finally:
+        conn.close()
