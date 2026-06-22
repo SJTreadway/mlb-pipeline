@@ -802,8 +802,12 @@ def _checkpoint_games(conn, computed_games: list[dict], game_date: str):
             VALUES (%s, %s, %s, CURRENT_TIMESTAMP())
             """,
             (
-                game["game_pk"], game["lineup_hash"], game_date,
-                game["game_pk"], game["lineup_hash"], game_date,
+                game["game_pk"],
+                game["lineup_hash"],
+                game_date,
+                game["game_pk"],
+                game["lineup_hash"],
+                game_date,
             ),
         )
     conn.commit()
@@ -1183,7 +1187,9 @@ def run_daily_ingest():
       2. Compare each game's roster hash against FEATURE_RUN_CHECKPOINTS.
       3. Only compute rolling features for games that are new or whose
          lineup changed (late scratch, etc.).
-      4. Checkpoint successfully computed games so the next run skips them.
+      4. Merge in recent relievers (last 7 days) so their features stay
+         current even when they aren't in today's confirmed lineup.
+      5. Checkpoint successfully computed games so the next run skips them.
     """
     today_data = get_todays_lineup_players()
     confirmed_games = today_data["confirmed_games"]
@@ -1204,9 +1210,15 @@ def run_daily_ingest():
         batter_ids = list({pid for g in games_to_run for pid in g["batter_ids"]})
         pitcher_ids = list({pid for g in games_to_run for pid in g["pitcher_ids"]})
 
+        # Always refresh recent relievers regardless of lineup confirmation —
+        # they appear late and are often missing from the confirmed lineup set
+        recent_relievers = get_recent_reliever_ids(days=7)
+        pitcher_ids = list(set(pitcher_ids) | set(recent_relievers))
+
         log.info(
-            f"Recomputing features for {len(games_to_run)} games "
-            f"({len(batter_ids)} batters, {len(pitcher_ids)} pitchers)"
+            f"Recomputing features for {len(games_to_run)} games — "
+            f"{len(batter_ids)} batters, {len(pitcher_ids)} pitchers "
+            f"({len(recent_relievers)} relievers merged)"
         )
 
         result = compute_rolling_features(
@@ -1218,6 +1230,8 @@ def run_daily_ingest():
         if result == "success":
             _checkpoint_games(conn, games_to_run, game_date)
         else:
-            log.warning(f"compute_rolling_features returned '{result}' — not checkpointing")
+            log.warning(
+                f"compute_rolling_features returned '{result}' — not checkpointing"
+            )
     finally:
         conn.close()
