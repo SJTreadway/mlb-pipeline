@@ -1158,10 +1158,7 @@ def compute_rolling_features(
             ["mlbam_id", "game_date"]
         ).reset_index(drop=True)
         pf_cp = pitcher_features.groupby(["mlbam_id", "game_date"]).last().reset_index()
-        log.info(
-            f"Computed pitcher features W/ LAST ROLLUP: {len(pitcher_features)} rows"
-        )
-        pitcher_features = pitcher_features.groupby(["mlbam_id", "game_date"])
+        log.info(f"Computed pitcher features W/ LAST ROLLUP: {len(pf_cp)} rows")
         log.info(f"Computed pitcher features: {len(pitcher_features)} rows")
         t = time.time()
         insert_fn(conn, pitcher_features, "PITCHER_ROLLING_FEATURES")
