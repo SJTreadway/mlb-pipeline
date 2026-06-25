@@ -823,7 +823,7 @@ def get_todays_lineup_players() -> dict:
     Hit the MLB API for today's confirmed lineups.
 
     Returns per-game roster lists (for checkpoint comparison) as well as
-    flat batter_ids / pitcher_ids sets for callers that just need the union.
+    flat batter_ids / pitcher_ids sets for callers that just need the union .
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     resp = requests.get(
@@ -841,7 +841,7 @@ def get_todays_lineup_players() -> dict:
     for game in games:
         lineups = game.get("lineups", {})
         # Skip games where the lineup hasn't been posted yet
-        if not lineups.get("homePlayers") and not lineups.get("awayPlayers"):
+        if not lineups.get("homePlayers") or not lineups.get("awayPlayers"):
             continue
 
         game_pk = game["gamePk"]
